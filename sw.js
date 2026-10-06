@@ -1,5 +1,5 @@
-// 柱状図ビューア：オフライン用（版 c17650ee）
-const CACHE = 'chuzyozu-c17650ee';
+// 柱状図ビューア：オフライン用（版 8b814345）
+const CACHE = 'chuzyozu-8b814345';
 const FILES = ["./", "index.html", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

@@ -305,6 +305,13 @@ const S = { logs: [], cur: 0, tab: 'layers', opt: { elev: true, log: true, n: tr
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function mdNorm(v){
+  const t = z2h(v).replace(/[／・，、]/g, '/').trim(); if (!t) return '';
+  let m = t.match(/^(\d{1,2})\D+(\d{1,2})$/);
+  if (!m && /^\d{3,4}$/.test(t)) m = [t, t.slice(0, t.length - 2), t.slice(-2)];
+  if (m) { const mo = +m[1], da = +m[2]; if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return `${mo}/${da}`; }
+  return t;
+}
 const z2h = s => String(s ?? '').replace(/[０-９．－＋]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 function num(s){ if (s === null || s === undefined) return null; const t = z2h(s).trim(); if (t === '' || t === '@') return null; const v = parseFloat(t); return Number.isFinite(v) ? v : null; }
 const f2 = v => (v === null || v === undefined || !Number.isFinite(v)) ? '' : v.toFixed(2);
@@ -1252,14 +1259,14 @@ function renderEdit(){
     h += `<h3 class="sub first">孔内水位</h3><div class="tw"><table class="ed wl"><thead><tr><th>測定月日</th><th>区分</th><th>水位 GL-m</th><th></th><th></th></tr></thead><tbody>`;
     L.water.forEach((w, i) => {
       const tm = w.timing || '作業前';
-      h += `<tr><td><input id="wl-${i}-date" data-k="water" data-i="${i}" data-f="date" placeholder="4/1" inputmode="numeric" value="${esc(w.date)}"></td>`
+      h += `<tr><td><input id="wl-${i}-date" data-k="water" data-i="${i}" data-f="date" placeholder="4.1" inputmode="decimal" enterkeyhint="done" autocomplete="off" value="${esc(w.date)}"></td>`
         + `<td><select id="wl-${i}-timing" data-k="water" data-i="${i}" data-f="timing">${['作業前', '作業後'].map(o => `<option${o === tm ? ' selected' : ''}>${o}</option>`).join('')}</select></td>`
         + `<td><input class="n" id="wl-${i}-depth" data-k="water" data-i="${i}" data-f="depth" inputmode="decimal" value="${f2(w.depth)}"></td>`
         + `<td>${i === 0 ? '<span class="badge">表示</span>' : ''}</td>`
         + `<td><button class="del" type="button" data-del="water" data-i="${i}" aria-label="${i+1}行目を削除">×</button></td></tr>`;
     });
     h += `</tbody></table></div><div class="row-actions"><button class="btn small" type="button" data-add="water">行を追加</button></div>`;
-    h += `<p class="note">毎日の作業前・作業後の水位を入れられます。「行を追加」を押すと、直前が作業前なら同じ日の作業後の行が、作業後なら次の作業前の行が入ります。画面の柱状図には最初の1件（初回測定）だけを表示し、国交省様式のPDFには重ならない範囲で全件を書きます。</p>`;
+    h += `<p class="note">毎日の作業前・作業後の水位を入れられます。「行を追加」を押すと、直前が作業前なら同じ日の作業後の行が、作業後なら次の作業前の行が入ります。月日は「4.1」「0401」のように入れても 4/1 になります。画面の柱状図には最初の1件（初回測定）だけを表示し、国交省様式のPDFには重ならない範囲で全件を書きます。</p>`;
     h += drillEditor(L);
   } else if (S.tab === 'rock') {
     h += rockEditor(L);
@@ -1330,7 +1337,7 @@ function rockEditor(L){
   rockInit(L);
   const sec = S.rsec || 'iv';
   let h = `<div class="seg" role="tablist" aria-label="岩盤の記録">` + RK_SEC.map(([k, l]) => `<button type="button" class="segb" data-rsec="${k}" aria-selected="${k === sec}">${l}</button>`).join('') + `</div>`;
-  const inp = (rk, i, f, v, opt = {}) => `<input class="${opt.n ? 'n' : ''}" id="rk-${rk}-${i}-${f}" data-rk="${rk}" data-i="${i}" data-f="${f}" value="${esc(v ?? '')}" autocomplete="off"${opt.n ? ' inputmode="decimal"' : ''}${opt.list ? ` list="${opt.list}"` : ''}${opt.ph ? ` placeholder="${opt.ph}"` : ''}>`;
+  const inp = (rk, i, f, v, opt = {}) => `<input class="${opt.n ? 'n' : ''}" id="rk-${rk}-${i}-${f}" data-rk="${rk}" data-i="${i}" data-f="${f}" value="${esc(v ?? '')}" autocomplete="off"${opt.n || opt.date ? ' inputmode="decimal"' : ''}${opt.list ? ` list="${opt.list}"` : ''}${opt.ph ? ` placeholder="${opt.ph}"` : ''}>`;
   const dep = (rk, i, f, v) => inp(rk, i, f, (v === null || v === undefined) ? '' : f2(v), { n: true });
   const del = (rk, i) => `<td class="x"><button class="del" type="button" data-rdel="${rk}" data-i="${i}" aria-label="${i + 1}行目を削除">×</button></td>`;
   const add = (rk, label = '行を追加') => `<div class="row-actions"><button class="btn small" type="button" data-radd="${rk}">${label}</button></div>`;
@@ -1355,7 +1362,7 @@ function rockEditor(L){
     const sub = (title, rk, heads, cells, note = '') => {
       h += `<h3 class="sub">${title}</h3>` + table(['下端深度', ...heads], D[rk].map((r, i) => `<tr><td class="dp">${dep(rk, i, 'depth', r.depth)}</td>${cells(r, i)}${del(rk, i)}</tr>`).join('')) + add(rk) + note;
     };
-    sub('掘進月日', 'r5050', ['月日', 'ケーシング深度'], (r, i) => `<td>${inp('r5050', i, 'date', r.date, { ph: '4/1' })}</td><td>${inp('r5050', i, 'casing', r.casing, { n: true })}</td>`,
+    sub('掘進月日', 'r5050', ['月日', 'ケーシング深度'], (r, i) => `<td>${inp('r5050', i, 'date', r.date, { ph: '4.1', date: true })}</td><td>${inp('r5050', i, 'casing', r.casing, { n: true })}</td>`,
       `<p class="note">その日の終わりの掘進深度と月日です。作業前・作業後の水位は「孔内水位」タブで入れます。</p>`);
     sub('掘進速度・給圧・回転数', 'r5020', ['掘進速度 cm/時', '給圧 MPa', '回転数 rpm'], (r, i) => `<td>${inp('r5020', i, 'speed', r.speed, { n: true })}</td><td>${inp('r5020', i, 'press', r.press, { n: true })}</td><td>${inp('r5020', i, 'rpm', r.rpm, { n: true })}</td>`);
     sub('送水・排水', 'r5040', ['送水圧 MPa', '送水量 l/分', '種別', '排水量 l/分'], (r, i) => `<td>${inp('r5040', i, 'wp', r.wp, { n: true })}</td><td>${inp('r5040', i, 'wq', r.wq, { n: true })}</td><td>${inp('r5040', i, 'wtype', r.wtype, { list: 'dl-wtype' })}</td><td>${inp('r5040', i, 'wout', r.wout, { n: true })}</td>`);
@@ -1376,7 +1383,8 @@ $('#editBody').addEventListener('change', e => {
   if (!row) return;
   const isDepth = f === 'depth' || f === 'bottom';
   if (isDepth) { const v = num(t.value); if (v === null) { renderEdit(); return; } row[f] = v; }
-  else row[f] = f === 'text' ? t.value.replace(/\s+$/, '') : t.value.trim();
+  else row[f] = f === 'text' ? t.value.replace(/\s+$/, '') : f === 'date' ? mdNorm(t.value) : t.value.trim();
+  if (f === 'date') t.value = row[f];
   if (rk === 'iv' && f === 'text') row.textEdited = true;
   markRock(L, rk); refreshRock(L);
   if (isDepth) renderEdit();
@@ -1455,7 +1463,7 @@ function drillEditor(L){
   let prev = 0, sum = 0;
   D.forEach((d, i) => {
     const len = d.depth - prev; sum += len;
-    h += `<tr><td><input id="dr-${i}-date" data-dr="${i}" data-f="date" placeholder="4/1" inputmode="numeric" value="${esc(d.date || '')}" autocomplete="off"></td>`
+    h += `<tr><td><input id="dr-${i}-date" data-dr="${i}" data-f="date" placeholder="4.1" inputmode="decimal" enterkeyhint="done" autocomplete="off" value="${esc(d.date || '')}"></td>`
       + `<td><input class="n" id="dr-${i}-depth" data-dr="${i}" data-f="depth" inputmode="decimal" value="${f2(d.depth)}" autocomplete="off"></td>`
       + `<td><input class="n${len < 0 ? ' bad' : ''}" id="dr-${i}-len" data-dr="${i}" data-f="len" inputmode="decimal" value="${f2(len)}" autocomplete="off"></td>`
       + `<td><button class="del" type="button" data-drdel="${i}" aria-label="${i + 1}行目を削除">×</button></td></tr>`;
@@ -1465,7 +1473,7 @@ function drillEditor(L){
   const last = D.length ? D[D.length - 1].depth : null;
   if (last !== null && L.total !== null && L.total !== undefined && Math.abs(last - L.total) > 0.005)
     h += `<p class="note warn">最後の掘進深度 ${f2(last)} m が総削孔長 ${f2(L.total)} m と違います。</p>`;
-  h += `<p class="note">掘進深度か掘進長のどちらかを入れると、もう一方は自動で計算します。掘進長を変えると、それより後の日の深度も同じだけずれます（各日の掘進長は変わりません）。国交省様式PDFの「掘進月日」欄に入り、.bor・XML（削孔工程）と .gan（5050）に保存します。</p>`;
+  h += `<p class="note">月日は「4.1」「0401」のように入れても 4/1 になります。掘進深度か掘進長のどちらかを入れると、もう一方は自動で計算します。掘進長を変えると、それより後の日の深度も同じだけずれます（各日の掘進長は変わりません）。国交省様式PDFの「掘進月日」欄に入り、.bor・XML（削孔工程）と .gan（5050）に保存します。</p>`;
   return h;
 }
 function drillChanged(L){
@@ -1486,7 +1494,7 @@ $('#editBody').addEventListener('change', e => {
   const t = e.target; if (t.dataset.dr === undefined) return;
   const L = cur(); if (!L) return;
   const i = +t.dataset.dr, d = L.drill[i], f = t.dataset.f; if (!d) return;
-  if (f === 'date') d.date = t.value.trim();
+  if (f === 'date') d.date = mdNorm(t.value);
   else {
     const v = num(t.value);
     if (v === null) { renderEdit(); return; }
@@ -1539,7 +1547,8 @@ $('#editBody').addEventListener('change', e => {
     } else if (t.dataset.k === 'layers' && f === 'bottom') {
       const v = num(t.value);
       if (v !== null) moveBoundary(L, +t.dataset.i, v);
-    } else row[f] = (f === 'name' || f === 'code' || f === 'date' || f === 'timing') ? t.value : num(t.value);
+    } else if (f === 'date') { row[f] = mdNorm(t.value); t.value = row[f]; }
+    else row[f] = (f === 'name' || f === 'code' || f === 'timing') ? t.value : num(t.value);
     if (t.dataset.k === 'water') row.tEdited = true;
     if (t.dataset.k === 'layers' && f === 'name') { const sw = document.getElementById(`ly-${t.dataset.i}-sw`); if (sw) sw.innerHTML = swatch(t.value); }
     if (t.dataset.k === 'layers' && f === 'bottom') { renderEdit(); }
@@ -3174,8 +3183,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 c17650ee） */
-window.APP_VER = 'c17650ee';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 8b814345） */
+window.APP_VER = '8b814345';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

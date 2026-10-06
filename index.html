@@ -211,7 +211,6 @@ table.ed.dr input.bad{color:#c0392b}
       <label class="tg"><input type="checkbox" id="oLog" checked> 柱状図</label>
       <label class="tg"><input type="checkbox" id="oN" checked> N値</label>
       <label class="tg"><input type="checkbox" id="oColor"> 色付け</label>
-      <span class="num-in"><label for="oShift">深度補正</label><input type="number" id="oShift" step="0.01" value="0"> m</span>
       <span class="num-in"><label for="oScale">縦スケール</label><input type="range" id="oScale" min="4" max="80" step="1" value="24"><output id="oScaleV">24 px/m</output></span>
       <button class="btn small" id="btnFit" type="button">全体表示</button>
     </div>
@@ -413,6 +412,7 @@ function parseXML(text, fname){
   if (doc.getElementsByTagName('parsererror').length) throw new Error(`${fname}: XMLとして読めませんでした`);
   const first = tag => { const e = doc.getElementsByTagName(tag)[0]; return e ? e.textContent.trim() : ''; };
   L.name = first('ボーリング名');
+  const dtdVer = parseFloat((doc.documentElement.getAttribute('DTD_version') || '4').replace(/[^\d.]/g, '')) || 4;
   L.elev = num(first('孔口標高'));
   L.total = num(first('総削孔長'));
   try { L.hdr = xmlHdr(doc); } catch (e) { L.hdr = {}; }
@@ -441,7 +441,10 @@ function parseXML(text, fname){
   overIv(ivRecs('色調'), (ly, a) => addVal(ly, 'color', pick(a.r, k => k.endsWith('色調名')) ?? '', '／'));
   overIv(ivRecs('観察記事'), (ly, a) => { const v = xmlNoteIn(pick(a.r, k => k.endsWith('_記事')) ?? ''); if (v) ly.note = ly.note ? ly.note + '\n' + v : v; });
   overIv(ivRecs('相対密度稠度'), (ly, a) => {
-    const dv = a.r['相対密度_状態'], cv = a.r['相対稠度_状態'];
+    const DC4 = { d: { 10: '非常に緩い', 20: '緩い', 30: '中ぐらい', 40: '密な', 50: '非常に密な' }, c: { 10: '非常に軟らかい', 20: '軟らかい', 30: '締まった', 40: '硬い', 50: '非常に硬い' } };
+    const DC3 = { d: { 1: '非常に緩い', 2: '緩い', 3: '中ぐらい', 4: '密な', 5: '非常に密な' }, c: { 1: '軟らかい', 2: '中位', 3: '硬い', 4: '非常に硬い', 5: '固結した' } };
+    const T = dtdVer >= 4 ? DC4 : DC3, cd = (a.r['相対密度_コード'] || '').trim(), cc = (a.r['相対稠度_コード'] || '').trim();
+    const dv = a.r['相対密度_状態'] || T.d[+cd] || '', cv = a.r['相対稠度_状態'] || T.c[+cc] || '';
     if (dv) addVal(ly, 'density', dv, '／');
     if (cv) addVal(ly, 'consistency', cv, '／');
     if (!dv && !cv) for (const k of Object.keys(a.r)) {   // 要素名が違う版への備え
@@ -480,38 +483,78 @@ function parseXML(text, fname){
     const depth = num(v);
     if (depth === null) continue;
     const dateRaw = pick(r, k => k.includes('測定年月日')) || '';
-    L.water.push({ depth, date: fmtDate(dateRaw), dateRaw, x: r });
+    const sc = String(pick(r, k => /(削孔|掘削)状況コード$/.test(k)) ?? '').trim();
+    L.water.push({ depth, date: fmtDate(dateRaw), dateRaw, x: r, timing: sc === '1' ? '作業前' : sc === '3' ? '作業後' : undefined });
   }
   // 試料採取・地層名（地質時代）・削孔工程（掘進月日）
   L.samples = xmlRecords(doc, '試料採取').map(r => ({ top: num(r['試料採取_上端深度']), bottom: num(r['試料採取_下端深度']), no: r['試料採取_試料番号'] || '', method: '', mcode: r['試料採取_採取方法コード'] || '' })).filter(x => x.top !== null);
   L.units = xmlRecords(doc, '地質時代').map(r => ({ top: num(r['地質時代_上端深度']), bottom: num(r['地質時代_下端深度']), v: r['地質時代_地質時代名'] || '' })).filter(x => x.top !== null && x.bottom !== null);
-  L.drill = xmlRecords(doc, '削孔工程').map(r => ({ depth: num(r['削孔工程_削孔深度']), date: fmtDate(r['削孔工程_測定年月日'] || ''), dateRaw: r['削孔工程_測定年月日'] || '' })).filter(x => x.depth !== null);
+  L.drill = [...xmlRecords(doc, '削孔工程'), ...xmlRecords(doc, '掘削工程')].map(r => {
+    const dr = pick(r, k => k.endsWith('測定年月日')) || '', cs = pick(r, k => k.includes('ケーシング'));
+    return { depth: num(pick(r, k => /(削孔|掘進)深度$/.test(k))), date: fmtDate(dr), dateRaw: dr, casing: num(cs) === null ? '' : String(cs).trim() };
+  }).filter(x => x.depth !== null);
   // 岩盤の区間記録（あれば）
   L.rock = {};
-  const RT = { hard: ['硬軟区分', '硬軟'], shape: ['コア形状区分', 'コア形状'], crack: ['割れ目状態区分', '割れ目の状態', '割れ目状態'], weather: ['風化区分', '風化の程度', '風化'],
-    alter: ['変質区分', '変質の程度', '変質'], rec: ['コア採取率'], maxc: ['最大コア長'], rqd: ['RQD'] };
+  const RT = { hard: ['硬軟区分'], shape: ['ボーリングコアの形状区分', 'コア形状区分'], crack: ['割れ目の状態区分', '割れ目区分'], weather: ['風化の程度区分', '風化区分'],
+    alter: ['熱水変質の程度区分', '変質区分'], rec: ['コア採取率'], maxc: ['最大コア長'], rqd: ['RQD'] };   // 先頭が DTD 4.00、後ろは 3.00
+  L.dtdVer = dtdVer; L.judge = {};
+  const JKEY = { 硬軟区分: 'hard', ボーリングコアの形状区分: 'shape', コア形状区分: 'shape', 割れ目の状態区分: 'crack', 割れ目区分: 'crack', 風化の程度区分: 'weather', 風化区分: 'weather', 熱水変質の程度区分: 'alter', 変質区分: 'alter', 岩級区分: 'cls' };
+  const codeMap = (tag, std) => {   // 判定表（○○判定表_コード → _記号）。無ければ要領の標準の表
+    const m = new Map(Object.entries(std || {}));
+    for (const r of [...xmlRecords(doc, tag + '判定表'), ...xmlRecords(doc, tag + '判定表_判定')]) {
+      const c = pick(r, x => x.endsWith('_コード')), s = pick(r, x => x.endsWith('_記号'));
+      if (c !== undefined && s) {
+        m.set(String(c).trim(), s.trim());
+        const k = JKEY[tag]; if (k) { (L.judge[k] = L.judge[k] || {})[s.trim()] = [String(c).trim(), (pick(r, x => x.endsWith('_区分')) || '').trim(), (pick(r, x => x.endsWith('_説明')) || '').trim()]; }
+      }
+    }
+    return m;
+  };
+  const STD = { 硬軟区分: { '011': 'A', '012': 'B', '013': 'C', '014': 'D', '015': 'E', '021': 'A', '022': 'B', '023': 'C', '024': 'D', '025': 'E' },
+    コア形状区分: { '011': 'I', '012': 'II', '013': 'III', '014': 'IV', '015': 'V', '016': 'VI', '017': 'VII', '018': 'VIII', '021': 'I', '022': 'II', '023': 'III', '024': 'IV', '025': 'V', '026': 'VI' },
+    割れ目区分: { '011': 'a', '012': 'b', '013': 'c', '014': 'd' } };
+  STD.ボーリングコアの形状区分 = STD.コア形状区分; STD.割れ目の状態区分 = STD.割れ目区分;
   for (const [k, tags] of Object.entries(RT)) {
     L.rock[k] = [];
     for (const tag of tags) {
+      const cm = codeMap(tag, STD[tag]);
       for (const r of xmlRecords(doc, tag)) {
         const bottom = num(pick(r, x => x.endsWith('下端深度'))); if (bottom === null) continue;
-        L.rock[k].push({ top: num(pick(r, x => x.includes('上端深度'))), bottom, v: pick(r, x => !x.includes('深度') && !x.includes('コード')) || '' });
+        const v = String(pick(r, x => !x.includes('深度') && !x.includes('コード')) ?? '').trim();
+        L.rock[k].push({ top: num(pick(r, x => x.includes('上端深度'))), bottom, v: cm.get(v) || v });
       }
       if (L.rock[k].length) break;
     }
   }
   fixRockTops(L);
   // 岩級区分（あれば）
+  const clsMap = codeMap('岩級区分');
   for (const tag of ['岩級区分', '岩級']) {
     for (const r of xmlRecords(doc, tag)) {
       const bottom = num(pick(r, k => k.includes('下端深度')));
       const top = num(pick(r, k => k.includes('上端深度')));
-      const label = pick(r, k => k.includes('岩級') && !k.includes('深度')) || '';
+      const lv = String(pick(r, k => k.includes('岩級') && !k.includes('深度')) ?? '').trim(), label = clsMap.get(lv) || lv;
       if (bottom !== null && label) L.classes.push({ top, bottom, label, x: r, tag });
     }
     if (L.classes.length) break;
   }
   fixClassTops(L);
+  {
+    const byDepth = new Map(), row = d => { const k = d.toFixed(2); if (!byDepth.has(k)) byDepth.set(k, { depth: d, speed: '', press: '', rpm: '' }); return byDepth.get(k); };
+    const each = (tags, fn) => { for (const t of tags) { const rs = xmlRecords(doc, t); if (rs.length) { rs.forEach(r => { const d = num(pick(r, k => k.endsWith('下端深度'))); if (d !== null) fn(r, d); }); return; } } };
+    const v = x => (x === undefined || x === null) ? '' : String(x).trim();
+    // 削孔速度・給圧・回転数は別々の区間の記録なので、境界を合わせて1つの表（5020 と同じ形）にする
+    const lists = { speed: [], press: [], rpm: [] };
+    each(['削孔速度', '掘進速度'], (r, d) => { row(d); lists.speed.push([d, v(pick(r, k => /_(削孔|掘進)速度$/.test(k)))]); });
+    each(['給圧条件'], (r, d) => { row(d); lists.press.push([d, v(r['給圧条件_給圧'])]); });
+    each(['回転数'], (r, d) => { row(d); lists.rpm.push([d, v(r['回転数_回転数'])]); });
+    for (const rw of byDepth.values()) for (const [f, a] of Object.entries(lists)) { const hit = a.slice().sort((x, y) => x[0] - y[0]).find(x => x[0] >= rw.depth - 1e-6); rw[f] = hit ? hit[1] : ''; }
+    const D = { r5020: [...byDepth.values()].sort((a, b) => a.depth - b.depth), r5030: [], r5040: [], r5050: [], r5060: [] };
+    each(['コアチューブビット'], (r, d) => D.r5030.push({ depth: d, bit: [v(r['コアチューブビット_コアチューブ名']), v(r['コアチューブビット_ビット名'])].filter(Boolean).join('/') }));
+    each(['送水条件'], (r, d) => D.r5040.push({ depth: d, wp: v(r['送水条件_送水圧']), wq: v(r['送水条件_送水量']), wout: v(r['送水条件_排水量']), wtype: v(r['送水条件_送水種類']) || (v(r['送水条件_送水種類コード']) ? 'W' + v(r['送水条件_送水種類コード']) : '') }));
+    each(['孔径孔壁保護'], (r, d) => D.r5060.push({ depth: d, dia: v(r['孔径孔壁保護_孔径']), method: v(r['孔径孔壁保護_孔壁保護方法']) || v(r['孔径孔壁保護_孔壁保護コード']), state: v(r['孔径孔壁保護_孔壁保護実施理由']) }));
+    if (['r5020', 'r5030', 'r5040', 'r5060'].some(k => D[k].length)) { L.drl = D; L.drlFromXml = true; refreshRock(L); }
+  }
   L.hdr0 = Object.assign({}, L.hdr); L.elev0 = L.elev; L.name0 = L.name; L.total0 = L.total;
   return finish(L);
 }
@@ -1024,7 +1067,7 @@ function render(){
   if (!L) { figHead.innerHTML = ''; figHead.setAttribute('width', 0); figHead.setAttribute('height', 0);
     figBody.setAttribute('width', '100%'); figBody.setAttribute('height', 120);
     figBody.innerHTML = `<text x="50%" y="60" text-anchor="middle" font-size="13" fill="#6b7378" font-family="sans-serif">ファイルを開くか「サンプル」を押してください</text>`; return; }
-  const o = S.opt, ppm = o.ppm, sh = +o.shift || 0;
+  const o = S.opt, ppm = o.ppm, sh = 0;   // 深度補正は使わない（以前の版で保存された値も無視する）
   const hasCls = L.classes.length > 0;
   const avail = Math.max(320, figScroll.clientWidth - 2);
   const narrow = avail < 520;
@@ -1294,6 +1337,14 @@ const RK_SEC = [['iv', '区間記録'], ['core', 'コア'], ['drl', '掘進記�
 const DRL_KEYS = ['r5020', 'r5030', 'r5040', 'r5050', 'r5060'];
 function rockInit(L){
   L.rockIv = L.rockIv || [];
+  const R0 = L.rock || {}, AT = ['hard', 'shape', 'crack', 'weather', 'alter'];
+  if (!L.rockIv.length && !L.rockIvBuilt && AT.some(f => (R0[f] || []).length)) {   // XML の区分（項目ごとの区間）から区間記録を作る
+    L.rockIvBuilt = true;
+    const bs = [...new Set(AT.flatMap(f => (R0[f] || []).map(iv => +(+iv.bottom).toFixed(2))))].sort((a, b) => a - b);
+    const at = (f, d) => { const iv = (R0[f] || []).find(x => d > (x.top ?? 0) + 1e-6 && d <= x.bottom + 1e-6); return iv ? iv.v || '' : ''; };
+    let t = 0;
+    L.rockIv = bs.map(b => { const o = { top: t, bottom: b, sub: '', color: (layerAtBottom(L, b) || {}).color || '', text: '', textEdited: true, notes: [] }; AT.forEach(f => { o[f] = at(f, b); }); t = b; return o; });
+  }
   if (!L.core) {   // コア採取率・最大コア長・RQD を深度ごとの行にまとめる
     const m = new Map(), R = L.rock || {};
     const add = (list, f) => (list || []).forEach(iv => {
@@ -1305,7 +1356,7 @@ function rockInit(L){
   }
   L.drl = L.drl || {};
   for (const k of DRL_KEYS) L.drl[k] = L.drl[k] || [];
-  if (!L.drl.r5050.length && L.drill && L.drill.length) L.drl.r5050 = L.drill.map(d => ({ depth: d.depth, date: d.date, casing: '' }));
+  if (!L.drl.r5050.length && L.drill && L.drill.length) L.drl.r5050 = L.drill.map(d => ({ depth: d.depth, date: d.date, casing: d.casing ?? '' }));
 }
 // 編集用の行から、柱状図・PDF で使う区間の一覧を作り直す
 function refreshRock(L){
@@ -1326,7 +1377,7 @@ function refreshRock(L){
     bit: run(D.r5030, r => r.bit), wp: run(D.r5040, r => r.wp), wq: run(D.r5040, r => [r.wtype, r.wq].filter(Boolean).join('/')), wout: run(D.r5040, r => r.wout),
     hole: run(D.r5060, r => [r.dia, r.method].filter(Boolean).join('/')),
   };
-  if (D.r5050.length || (L.rockEdited || {}).d5050) L.drill = byD(D.r5050, 'depth').filter(r => r.date && r.depth < 9999).map(r => ({ depth: r.depth, date: r.date }));
+  if (D.r5050.length || (L.rockEdited || {}).d5050) L.drill = byD(D.r5050, 'depth').filter(r => r.date && r.depth < 9999).map(r => Object.assign({}, (L.drill || []).find(x => x.date === r.date) || {}, { depth: r.depth, date: r.date, casing: r.casing ?? '' }));
   byD(L.classes, 'bottom'); fixClassTopsAll(L);
 }
 function fixClassTopsAll(L){ let p = 0; for (const c of L.classes) { c.top = p; p = c.bottom; } }
@@ -1464,13 +1515,14 @@ function ganRockGroups(L, G, fromGan, waterBefore, waterAfter){
 /* ---------------- 掘進月日（毎日の掘進長） ---------------- */
 function drillEditor(L){
   const D = L.drill = L.drill || [];
-  let h = `<h3 class="sub" id="drill-h">掘進月日（毎日の掘進長）</h3><div class="tw"><table class="ed dr"><thead><tr><th>月日</th><th>掘進深度 GL-m<br><small>その日の終わり</small></th><th>掘進長 m<br><small>その日の分</small></th><th></th></tr></thead><tbody>`;
+  let h = `<h3 class="sub" id="drill-h">掘進月日（毎日の掘進長）</h3><div class="tw"><table class="ed dr"><thead><tr><th>月日</th><th>掘進深度 GL-m<br><small>その日の終わり</small></th><th>掘進長 m<br><small>その日の分</small></th><th>ケーシング<br><small>下端 GL-m</small></th><th></th></tr></thead><tbody>`;
   let prev = 0, sum = 0;
   D.forEach((d, i) => {
     const len = d.depth - prev; sum += len;
     h += `<tr><td><input id="dr-${i}-date" data-dr="${i}" data-f="date" placeholder="4.1" inputmode="decimal" enterkeyhint="done" autocomplete="off" value="${esc(d.date || '')}"></td>`
       + `<td><input class="n" id="dr-${i}-depth" data-dr="${i}" data-f="depth" inputmode="decimal" value="${f2(d.depth)}" autocomplete="off"></td>`
       + `<td><input class="n${len < 0 ? ' bad' : ''}" id="dr-${i}-len" data-dr="${i}" data-f="len" inputmode="decimal" value="${f2(len)}" autocomplete="off"></td>`
+      + `<td><input class="n" id="dr-${i}-casing" data-dr="${i}" data-f="casing" inputmode="decimal" value="${d.casing === '' || d.casing === undefined || num(d.casing) === null ? '' : f2(num(d.casing))}" autocomplete="off"></td>`
       + `<td><button class="del" type="button" data-drdel="${i}" aria-label="${i + 1}行目を削除">×</button></td></tr>`;
     prev = d.depth;
   });
@@ -1478,7 +1530,7 @@ function drillEditor(L){
   const last = D.length ? D[D.length - 1].depth : null;
   if (last !== null && L.total !== null && L.total !== undefined && Math.abs(last - L.total) > 0.005)
     h += `<p class="note warn">最後の掘進深度 ${f2(last)} m が総削孔長 ${f2(L.total)} m と違います。</p>`;
-  h += `<p class="note">月日は「4.1」「0401」のように入れても 4/1 になります。掘進深度か掘進長のどちらかを入れると、もう一方は自動で計算します。掘進長を変えると、それより後の日の深度も同じだけずれます（各日の掘進長は変わりません）。国交省様式PDFの「掘進月日」欄に入り、.bor・XML（削孔工程）と .gan（5050）に保存します。</p>`;
+  h += `<p class="note">月日は「4.1」「0401」のように入れても 4/1 になります。掘進深度か掘進長のどちらかを入れると、もう一方は自動で計算します。掘進長を変えると、それより後の日の深度も同じだけずれます（各日の掘進長は変わりません）。国交省様式PDFの「掘進月日」欄に入り、.bor・XML（削孔工程）と .gan（5050）に保存します。ケーシング下端深度（その日の作業終了時）は XML と .gan に保存します（.bor には項目がありません）。</p>`;
   return h;
 }
 function drillChanged(L){
@@ -1486,10 +1538,13 @@ function drillChanged(L){
   L.drillEdited = true;
   if (L.drl) {   // 岩盤タブの掘進月日（5050）と合わせる。ケーシング深度は同じ月日の行から引き継ぐ
     const old = L.drl.r5050 || [];
-    L.drl.r5050 = L.drill.map((d, i) => { const o = old.find(r => r.date && r.date === d.date) || old[i] || {}; return { depth: d.depth, date: d.date, casing: o.casing ?? '' }; });
+    const dated = old.filter(r => r.date && r.depth < 9999), keep = old.filter(r => !(r.date && r.depth < 9999));   // 月日のない行は掘進タブに出ないので、そのまま残す
+    L.drl.r5050 = L.drill.map((d, i) => { const o = dated.find(r => r.date === d.date) || dated[i] || {}; return { depth: d.depth, date: d.date, casing: d.casing !== undefined ? d.casing : (o.casing ?? '') }; })
+      .concat(keep).sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0));
     if (L.format === 'gan') L.rockEdited = Object.assign({}, L.rockEdited, { drl: true, d5050: true });
   }
 }
+const hasCasing = L => [...((L.drl || {}).r5050 || []), ...(L.drill || [])].some(r => r.casing !== '' && r.casing !== null && r.casing !== undefined && num(r.casing) !== null);
 function drillNote(L, notes){
   const D = L.drill || [], last = D.length ? D[D.length - 1].depth : null;
   if (L.drillEdited && last !== null && L.total !== null && L.total !== undefined && Math.abs(last - L.total) > 0.005)
@@ -1500,6 +1555,7 @@ $('#editBody').addEventListener('change', e => {
   const L = cur(); if (!L) return;
   const i = +t.dataset.dr, d = L.drill[i], f = t.dataset.f; if (!d) return;
   if (f === 'date') d.date = mdNorm(t.value);
+  else if (f === 'casing') { const v = num(t.value); d.casing = v === null ? '' : String(v); }
   else {
     const v = num(t.value);
     if (v === null) { renderEdit(); return; }
@@ -1523,7 +1579,7 @@ $('#editBody').addEventListener('click', e => {
     const m = last ? mdOf(last.date) : null; let date = '';
     if (m) { const x = new Date(2001, m[0] - 1, m[1] + 1); date = `${x.getMonth() + 1}/${x.getDate()}`; }
     const step = last && last.depth - prev > 0 ? last.depth - prev : 1;   // 前日と同じ掘進長を仮に入れる
-    L.drill.push({ depth: Math.round(((last ? last.depth : 0) + step) * 100) / 100, date });
+    L.drill.push({ depth: Math.round(((last ? last.depth : 0) + step) * 100) / 100, date, casing: last ? (last.casing ?? '') : '' });
   }
   drillChanged(L);
   renderEdit(); render(); save();
@@ -1599,18 +1655,17 @@ document.querySelector('.tabs').addEventListener('click', e => {
 /* ---------------- 表示オプション ---------------- */
 function syncOpts(){
   $('#oElev').checked = S.opt.elev !== false; $('#oLog').checked = S.opt.log; $('#oN').checked = S.opt.n; $('#oColor').checked = S.opt.color;
-  $('#oShift').value = S.opt.shift; $('#oScale').value = S.opt.ppm; $('#oScaleV').textContent = `${S.opt.ppm} px/m`;
+  $('#oScale').value = S.opt.ppm; $('#oScaleV').textContent = `${S.opt.ppm} px/m`;
 }
 $('#oLog').addEventListener('change', e => { S.opt.log = e.target.checked; render(); save(); });
 $('#oN').addEventListener('change', e => { S.opt.n = e.target.checked; render(); save(); });
 $('#oElev').addEventListener('change', e => { S.opt.elev = e.target.checked; render(); save(); });
 $('#oColor').addEventListener('change', e => { S.opt.color = e.target.checked; render(); renderEdit(); save(); });
-$('#oShift').addEventListener('change', e => { S.opt.shift = num(e.target.value) || 0; render(); save(); });
 $('#oScale').addEventListener('input', e => { S.opt.ppm = +e.target.value; $('#oScaleV').textContent = `${S.opt.ppm} px/m`; render(); });
 $('#oScale').addEventListener('change', save);
 $('#btnFit').addEventListener('click', () => {
   const L = cur(); if (!L) return;
-  const maxD = Math.max(L.total || 0, L.layers.length ? L.layers[L.layers.length - 1].bottom : 0, 1) + Math.abs(+S.opt.shift || 0);
+  const maxD = Math.max(L.total || 0, L.layers.length ? L.layers[L.layers.length - 1].bottom : 0, 1);
   const avail = figScroll.clientHeight - 44 - 40;
   S.opt.ppm = Math.max(4, Math.min(80, Math.floor(avail / maxD)));
   syncOpts(); render(); save();
@@ -1929,6 +1984,7 @@ function writeBOR(L){
   if (L.layers.some(ly => ly.code)) notes.push({ t: '記号は .bor に入れていません。' });
   if (L.rockEdited && (L.rockEdited.iv || L.rockEdited.core || L.rockEdited.drlx)) notes.push({ w: true, t: '「岩盤」タブの区間記録・コア・掘進記録（掘進月日を除く）は .bor に入れる項目がないため保存されません。' });
   drillNote(L, notes);
+  if (hasCasing(L)) notes.push({ w: true, t: 'ケーシング深度は .bor に入れる項目がないため保存されません（.gan で保存すると残ります）。' });
   return { text: out.join('\n') + '\n', notes };
 }
 
@@ -2055,7 +2111,7 @@ function gan2001(L, fromGan){
 }
 
 /* ---------------- .xml（ボーリング交換用データ） ---------------- */
-const XML_TPL = '<ボーリング情報 DTD_version="4.00">\n  <標題情報>\n    <調査基本情報>\n      <ボーリング名 />\n    </調査基本情報>\n    <ボーリング基本情報>\n      <孔口標高 />\n      <総削孔長 />\n    </ボーリング基本情報>\n  </標題情報>\n  <コア情報>\n  </コア情報>\n</ボーリング情報>';
+const XML_TPL = '<ボーリング情報 DTD_version="5.00">\n  <標題情報>\n    <調査基本情報>\n      <ボーリング名 />\n    </調査基本情報>\n    <ボーリング基本情報>\n      <孔口標高 />\n      <総削孔長 />\n    </ボーリング基本情報>\n  </標題情報>\n  <コア情報>\n  </コア情報>\n</ボーリング情報>';
 const ents = x => x ? Object.entries(x).map(([k, v]) => [k, v]) : [];
 function put(e, pred, key, val){
   const it = e.find(([k]) => pred(k));
@@ -2084,7 +2140,10 @@ function isoDate(md, raw){
   return `${y}-${String(d[0]).padStart(2, '0')}-${String(d[1]).padStart(2, '0')}`;
 }
 // ---- XML の書き出し：元の文字列を土台に、変えた記録のまとまりだけを差し替える ----
-const XML_ORDER = ['工学的地質区分名現場土質名', '色調', '観察記事', '観察記事枠線', '標準貫入試験', '相対密度稠度', '岩級区分', '原位置試験', '試料採取', '室内試験', '地質時代', '孔内水位', '削孔工程', 'フリー情報'];
+const XML_ORDER = ['工学的地質区分名現場土質名', '色調', '観察記事', '観察記事枠線', '標準貫入試験', '標準貫入試験詳細データ', 'ルジオン試験', 'ルジオン試験詳細データ', '相対密度稠度',
+  '硬軟区分判定表', '硬軟区分', 'ボーリングコアの形状区分判定表', 'ボーリングコアの形状区分', '割れ目の状態区分判定表', '割れ目の状態区分', '風化の程度区分判定表', '風化の程度区分', '熱水変質の程度区分判定表', '熱水変質の程度区分',
+  '破砕度判定表', '破砕度', '孔内載荷試験', '透水試験', 'P波試験', 'S波試験', 'その他原位置試験', '試料採取', '地盤材料の工学的分類', '地質時代', '地層岩体区分', '孔内水位', '削孔工程', '孔径孔壁保護', '削孔速度',
+  'コアチューブビット', '給圧条件', '回転数', '送水条件', '断層破砕帯区分', 'コア採取率', '最大コア長', 'RQD', 'コア質量', '岩級区分判定表', '岩級区分', '保孔管', '計測機器', '備考', 'フリー情報'];
 const xEsc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 function xmlEl(k, v, ind, eol){
   if (Array.isArray(v)) return `${ind}<${k}>${eol}` + v.map(([a, b]) => xmlEl(a, b, ind + '  ', eol)).join(eol) + `${eol}${ind}</${k}>`;
@@ -2128,13 +2187,16 @@ function xmlSetLeaf(src, tag, v){
 function treeSet(tree, pred, v){ for (const it of tree) { if (Array.isArray(it[1])) { if (treeSet(it[1], pred, v)) return true; } else if (pred(it[0])) { it[1] = v; return true; } } return false; }
 function xmlYear(L){
   const ds = [...(L.water || []), ...(L.drill || [])].map(x => x.dateRaw).filter(Boolean);
-  const y = (String(ds[0] || (L.hdr || {}).period || '').match(/\d{4}/) || [])[0];
-  return y ? +y : TODAY.getFullYear();
+  const t = String((L.hdr || {}).period || ds[0] || ''), y = (t.match(/\d{4}/) || [])[0];
+  if (y) return +y;
+  const e = t.match(/(令和|平成|昭和)\s*(\d+|元)/);   // 岩盤BASE は元号
+  if (e) return { 令和: 2018, 平成: 1988, 昭和: 1925 }[e[1]] + (e[2] === '元' ? 1 : +e[2]);
+  return TODAY.getFullYear();
 }
 function writeXML(L){
   const notes = [];
   const fromXml = L.format === 'xml' && typeof L.raw === 'string';
-  let doctype = '<!DOCTYPE ボーリング情報 SYSTEM "BED0400.DTD">', src;
+  let doctype = '<!DOCTYPE ボーリング情報 SYSTEM "BED0500.DTD">', src;
   if (fromXml) {
     const m = L.raw.match(/<!DOCTYPE[^>]*>/i); if (m) doctype = m[0];
     src = L.raw.replace(/^﻿/, '').replace(/<\?xml[^>]*\?>\s*/, '').replace(/<!DOCTYPE[^>]*>\s*/i, '');
@@ -2202,14 +2264,16 @@ function writeXML(L){
   }
   if (edited('density') || edited('consistency')) {
     src = xmlSetRecs(src, '相対密度稠度', L.layers.map(ly => {
-      const e = [['相対密度稠度_下端深度', nstr(ly.bottom)], ['相対密度_コード', ly.density ? '99' : '00']];
-      if (ly.density) e.push(['相対密度_状態', ly.density]);
-      e.push(['相対稠度_コード', ly.consistency ? '99' : '00']);
-      if (ly.consistency) e.push(['相対稠度_状態', ly.consistency]);
+      // 要領の表（DTD 4.00）にある言葉はそのコード、ほかはコード99（その他）＋状態
+      const CD = { 非常に緩い: '10', 緩い: '20', 中ぐらい: '30', 密な: '40', 非常に密な: '50' }, CC = { 非常に軟らかい: '10', 軟らかい: '20', 締まった: '30', 硬い: '40', 非常に硬い: '50' };
+      const e = [['相対密度稠度_下端深度', nstr(ly.bottom)], ['相対密度_コード', ly.density ? (CD[ly.density] || '99') : '00']];
+      if (ly.density && !CD[ly.density]) e.push(['相対密度_状態', ly.density]);
+      e.push(['相対稠度_コード', ly.consistency ? (CC[ly.consistency] || '99') : '00']);
+      if (ly.consistency && !CC[ly.consistency]) e.push(['相対稠度_状態', ly.consistency]);
       return e;
     }), eol);
   }
-  if (fromXml && ['color', 'note', 'density', 'consistency'].some(f => L.layers.some(ly => ly.ed && ly.ed[f]))) notes.push({ t: '編集した色調・相対密度・相対稠度・記事は、層ごとの記録に作り直します（相対密度・相対稠度はコード99＝その他＋文字）。' });
+  if (fromXml && ['color', 'note', 'density', 'consistency'].some(f => L.layers.some(ly => ly.ed && ly.ed[f]))) notes.push({ t: '編集した色調・相対密度・相対稠度・記事は、層ごとの記録に作り直します（相対密度・相対稠度は要領の表にある言葉ならそのコード、ほかはコード99＝その他＋文字）。' });
 
   // 標準貫入試験（貫入量は mm）
   const PS = '標準貫入試験', IVN = ['0_100', '100_200', '200_300'];
@@ -2237,35 +2301,121 @@ function writeXML(L){
 
   // 孔内水位（作業前・作業後の区別は XML に書く場所がないため、削孔状況コードは元の値のまま）
   const Y0 = xmlYear(L);
-  const iso = (w, prev) => {
+  // 年は調査開始の年。開始月より前の月なら翌年（10月開始で2月なら翌年）
+  const M0 = (() => { const t = String((L.hdr || {}).period || ''), m = t.match(/(\d+)\s*年\s*(\d+)\s*月/) || t.match(/\d{4}\D(\d{1,2})\D/);
+    if (m) return +(m[2] || m[1]); const ds = [...(L.drill || []), ...(L.water || [])].map(x => mdOf(x.date)).filter(Boolean); return ds.length ? ds[0][0] : 1; })();
+  let yr, pm;
+  const iso = (w) => {
     if (w.dateRaw && fmtDate(w.dateRaw) === w.date) return w.dateRaw;
     const d = mdOf(w.date); if (!d) return '';
-    let y = Y0; const p = prev ? mdOf(prev) : null; if (p && d[0] < p[0] - 6) y++;
-    return `${y}-${String(d[0]).padStart(2, '0')}-${String(d[1]).padStart(2, '0')}`;
+    return `${d[0] >= M0 ? Y0 : Y0 + 1}-${String(d[0]).padStart(2, '0')}-${String(d[1]).padStart(2, '0')}`;
   };
-  let pd = null;
+  let pd = null; yr = Y0; pm = null;
   src = xmlSetRecs(src, '孔内水位', L.water.map(w => {
     const e = w.x ? ents(w.x) : [['孔内水位_測定年月日', ''], ['孔内水位_削孔状況コード', ''], ['孔内水位_孔内水位', '']];
     put(e, k => k === '孔内水位_測定年月日', '孔内水位_測定年月日', iso(w, pd)); pd = w.date;
     put(e, k => k === '孔内水位_孔内水位', '孔内水位_孔内水位', nstr(w.depth));
+    if (!w.x || w.tEdited) { const it = e.find(([k]) => /(削孔|掘削)状況コード$/.test(k)); if (it) it[1] = w.timing === '作業後' ? '3' : '1'; }   // 1 作業開始時／3 作業終了時
     return e;
   }), eol);
-  if (L.water.some(w => w.timing === '作業後')) notes.push({ t: 'XMLには作業前・作業後の区別を書く項目がないため、測定月日の順に並べて保存します（同じ日の2件目を作業後として読み込みます）。' });
+  if (L.water.some(w => !w.x || w.tEdited)) notes.push({ t: '入力・変更した孔内水位は、削孔状況コードを作業前＝1（作業開始時）、作業後＝3（作業終了時）にして保存します。' });
 
   // 削孔工程（掘進月日）
   if (!fromXml || L.drillEdited) {
-    pd = null;
-    src = xmlSetRecs(src, '削孔工程', (L.drill || []).map(d => { const e = [['削孔工程_測定年月日', iso(d, pd)], ['削孔工程_削孔深度', nstr(d.depth)]]; pd = d.date; return e; }), eol);
+    pd = null; yr = Y0; pm = null;
+    const old3 = /<掘削工程>/.test(src), tg = old3 ? '掘削工程' : '削孔工程', dk = old3 ? '掘削工程_掘進深度' : '削孔工程_削孔深度';   // DTD 3.00 は掘削工程
+    src = xmlSetRecs(src, tg, (L.drill || []).map(d => {
+      const e = [[`${tg}_測定年月日`, iso(d, pd)], [dk, nstr(d.depth)]]; pd = d.date;
+      const c = num(d.casing); if (c !== null) e.push([`${tg}_ケーシング下端深度`, nstr(c)]);
+      return e;
+    }), eol);
   }
 
-  if (L.classes.length && (!fromXml || L.classes.some(c => !c.x))) {
-    const tag = L.classes[0].tag || '岩級区分';
-    src = xmlSetRecs(src, tag, L.classes.map(c => { const e = ents(c.x);
-      put(e, k => k.includes('上端深度'), `${tag}_上端深度`, nstr(c.top)); put(e, k => k.includes('下端深度'), `${tag}_下端深度`, nstr(c.bottom)); put(e, k => k.includes('岩級') && !k.includes('深度'), `${tag}_岩級`, c.label || ''); return e; }), eol);
-    notes.push({ t: '岩級区分の要素名は推定です。' });
-  }
-  if (L.rockEdited && (L.rockEdited.iv || L.rockEdited.core || L.rockEdited.drlx)) notes.push({ w: true, t: '「岩盤」タブの区間記録・コア・掘進記録（掘進月日を除く）はXMLには保存されません。' });
+  if (fromXml && L.dtdVer < 4 && L.rockEdited && Object.keys(L.rockEdited).length) notes.push({ w: true, t: '元のXMLが古い版（DTD 3.00）のため、岩盤タブで編集した記録は保存されません。' });
+  else src = xmlRockGroups(src, L, eol, fromXml, notes);
   return { text: `<?xml version="1.0" encoding="Shift_JIS"?>${eol}${doctype}${eol}${src.replace(/\s+$/, '')}`, notes };
+}
+
+// ---- 岩盤の区分・判定表・コア・掘進状況を XML（DTD 4.00／5.00）に書く ----
+// 要領の「区分基準の例」（表2-25・2-33・2-37）。これ以外の記号は 910, 920… の独自コードにして判定表に記号だけ書く
+const JUDGE_STD = {
+  hard: { A: ['011', '極硬', 'ハンマーで容易に割れない。'], B: ['012', '硬', 'ハンマーで金属音。'], C: ['013', '中硬', 'ハンマーで容易に割れる。'], D: ['014', '軟', 'ハンマーでボロボロに砕ける。'], E: ['015', '極軟', 'マサ状、粘土状。'] },
+  shape: { I: ['011', '', '長さ50cm以上の棒状コア。'], II: ['012', '', '長さが50～15cmの棒状コア。'], III: ['013', '', '長さが15～5cmの棒状～片状コア。'], IV: ['014', '', '長さが5cm以下の棒状～片状コアでかつコアの外周の一部が認められるもの。'],
+    V: ['015', '', '主として角礫状のもの。'], VI: ['016', '', '主として砂状のもの。'], VII: ['017', '', '主として粘土状のもの。'], VIII: ['018', '', 'コアの採取ができないもの。スライムも含む。'] },
+  crack: { a: ['011', '', '密着している、あるいは分離しているが割れ目沿いの風化・変質は認められない。'], b: ['012', '', '割れ目沿いの風化・変質は認められるが、岩片はほとんど風化・変質していない。'],
+    c: ['013', '', '割れ目沿いの岩片に風化・変質が認められ軟質となっている。'], d: ['014', '', '割れ目として認識できない角礫状、砂状、粘土状コアとなっている。'] },
+};
+const ROCK_XML = { hard: '硬軟区分', shape: 'ボーリングコアの形状区分', crack: '割れ目の状態区分', weather: '風化の程度区分', alter: '熱水変質の程度区分' };
+const ZEN = s => String(s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).trim();
+function judgeCodes(L, key, syms){   // 記号 → [コード, 区分, 説明]（読み込んだファイルの判定表を優先）
+  const fileJ = ((L.judge || {})[key]) || {}, std = JUDGE_STD[key] || {}, out = new Map(), used = new Set();
+  for (const s of syms) {
+    const f = fileJ[s]; if (f) { out.set(s, f); used.add(f[0]); continue; }
+    const st = std[ZEN(s)]; if (st) { out.set(s, st); used.add(st[0]); }
+  }
+  let n = 910;
+  for (const s of syms) { if (out.has(s)) continue; while (used.has(String(n))) n += 10; out.set(s, [String(n), '', '']); used.add(String(n)); n += 10; }
+  return out;
+}
+function xmlRockGroups(src, L, eol, fromXml, notes){
+  const RE = L.rockEdited || {}, need = f => !fromXml || RE[f];
+  rockInit(L); refreshRock(L);
+  const v9 = x => (x === undefined || x === null || String(x).trim() === '' || num(x) === 9999) ? '' : String(x).trim();
+  let wrote = false;
+  // 区分（硬軟・コア形状・割れ目・風化・熱水変質）と判定表
+  if (need('iv') && L.rockIv.length) {
+    for (const [key, tag] of Object.entries(ROCK_XML)) {
+      const runs = []; for (const iv of L.rockIv) { const v = String(iv[key] || '').trim(); const last = runs[runs.length - 1]; if (last && last.v === v) last.bottom = iv.bottom; else runs.push({ bottom: iv.bottom, v }); }
+      const syms = [...new Set(runs.map(r => r.v).filter(Boolean))];
+      if (!syms.length && fromXml && !xmlRecSpans(src, tag).length) continue;
+      const jc = judgeCodes(L, key, syms);
+      src = xmlSetRecs(src, tag + '判定表', syms.map(s => { const [c, k, d] = jc.get(s); const e = [[`${tag}判定表_コード`, c], [`${tag}判定表_記号`, s]]; if (k) e.push([`${tag}判定表_区分`, k]); if (d) e.push([`${tag}判定表_説明`, d]); return e; }), eol);
+      src = xmlSetRecs(src, tag, syms.length ? runs.map(r => { const e = [[`${tag}_下端深度`, nstr(r.bottom)]]; if (r.v) e.push([`${tag}_${tag}`, jc.get(r.v)[0]]); return e; }) : [], eol);
+      wrote = true;
+    }
+  }
+  // コア採取率・最大コア長・RQD
+  if (need('core') && L.core.length) {
+    src = xmlSetRecs(src, 'コア採取率', L.core.filter(c => v9(c.rec) !== '').map(c => [['コア採取率_下端深度', nstr(c.depth)], ['コア採取率_採取率', v9(c.rec)]]), eol);
+    src = xmlSetRecs(src, '最大コア長', L.core.filter(c => v9(c.maxc) !== '').map(c => [['最大コア長_下端深度', nstr(c.depth)], ['最大コア長_コア長', v9(c.maxc)]]), eol);
+    src = xmlSetRecs(src, 'RQD', L.core.filter(c => v9(c.rqd) !== '').map(c => [['RQD_下端深度', nstr(c.depth)], ['RQD_RQD', v9(c.rqd)]]), eol);
+    wrote = true;
+  }
+  // 掘進状況
+  const D = L.drl || {};
+  if (need('drlx') && ['r5020', 'r5030', 'r5040', 'r5060'].some(k => (D[k] || []).length)) {
+    const r20 = (D.r5020 || []).filter(r => r.depth < 9999);
+    src = xmlSetRecs(src, '孔径孔壁保護', (D.r5060 || []).filter(r => r.depth < 9999).map(r => {
+      const m = v9(r.method), code = { 泥水: '1', ケーシング: '2', セメンティング: '3' }[m] || (/^B[1-4]$/i.test(m) ? { B1: '1', B2: '2', B3: '3', B4: '9' }[m.toUpperCase()] : (m ? '9' : ''));
+      const e = [['孔径孔壁保護_下端深度', nstr(r.depth)], ['孔径孔壁保護_孔径', v9(r.dia)]];
+      if (code) e.push(['孔径孔壁保護_孔壁保護コード', code]); if (m) e.push(['孔径孔壁保護_孔壁保護方法', m]); if (v9(r.state)) e.push(['孔径孔壁保護_孔壁保護実施理由', v9(r.state)]);
+      return e;
+    }), eol);
+    src = xmlSetRecs(src, '削孔速度', r20.filter(r => v9(r.speed) !== '').map(r => [['削孔速度_下端深度', nstr(r.depth)], ['削孔速度_削孔速度', v9(r.speed)]]), eol);
+    src = xmlSetRecs(src, 'コアチューブビット', (D.r5030 || []).filter(r => r.depth < 9999 && v9(r.bit)).map(r => {
+      const b = v9(r.bit), i = b.indexOf('/'), e = [['コアチューブビット_下端深度', nstr(r.depth)]];
+      if (i > 0) e.push(['コアチューブビット_コアチューブ名', b.slice(0, i)], ['コアチューブビット_ビット名', b.slice(i + 1)]); else e.push(['コアチューブビット_ビット名', b]);
+      return e;
+    }), eol);
+    src = xmlSetRecs(src, '給圧条件', r20.filter(r => v9(r.press) !== '').map(r => [['給圧条件_下端深度', nstr(r.depth)], ['給圧条件_給圧', v9(r.press)]]), eol);
+    src = xmlSetRecs(src, '回転数', r20.filter(r => v9(r.rpm) !== '').map(r => [['回転数_下端深度', nstr(r.depth)], ['回転数_回転数', v9(r.rpm)]]), eol);
+    src = xmlSetRecs(src, '送水条件', (D.r5040 || []).filter(r => r.depth < 9999).map(r => {
+      const t = v9(r.wtype), code = /^W[1-59]$/i.test(t) ? t.slice(1) : ({ 無水: '1', 清水: '2', 泥水: '3', 界面活性剤: '4', 増粘剤: '5' }[t] || (t ? '9' : '9'));
+      const e = [['送水条件_下端深度', nstr(r.depth)], ['送水条件_送水圧', v9(r.wp)], ['送水条件_送水量', v9(r.wq)], ['送水条件_排水量', v9(r.wout)], ['送水条件_送水種類コード', code]];
+      if (t && !/^W[1-59]$/i.test(t)) e.push(['送水条件_送水種類', t]);
+      return e;
+    }), eol);
+    wrote = true;
+  }
+  // 岩級区分と判定表
+  if (need('cls') && L.classes.length) {
+    const syms = [...new Set(L.classes.map(c => String(c.label || '').trim()).filter(Boolean))], jc = judgeCodes(L, 'cls', syms);
+    src = xmlSetRecs(src, '岩級区分判定表', syms.length ? [syms.map(s => ['岩級区分判定表_判定', [['岩級区分判定表_コード', jc.get(s)[0]], ['岩級区分判定表_記号', s]].concat(jc.get(s)[2] ? [['岩級区分判定表_説明', jc.get(s)[2]]] : [])])] : [], eol);
+    src = xmlSetRecs(src, '岩級区分', L.classes.map(c => { const e = [['岩級区分_下端深度', nstr(c.bottom)]]; const s = String(c.label || '').trim(); if (s) e.push(['岩級区分_岩級区分', jc.get(s)[0]]); return e; }), eol);
+    wrote = true;
+  }
+  if (wrote) notes.push({ t: '岩盤の区分は判定表を付けて書きます。要領の区分基準の例にある記号（硬軟 A〜E、コア形状 I〜VIII、割れ目 a〜d）はそのコードと説明、ほかの記号（風化・変質・岩級など）は 910・920… の独自コードで記号だけ書きます。' });
+  return src;
 }
 
 /* ---------------- Shift_JIS 変換（ブラウザの復号表から逆引き表を作る） ---------------- */
@@ -3247,8 +3397,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 54e05724） */
-window.APP_VER = '54e05724';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 f848e46c） */
+window.APP_VER = 'f848e46c';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

@@ -443,8 +443,11 @@ function parseXML(text, fname){
       for (const ly of L.layers) { const lo = Math.max(t, a.top), hi = Math.min(ly.bottom, a.bottom);
         if (hi - lo > 1e-3 || (a.bottom - a.top < 1e-3 && near(a.bottom, ly.bottom))) apply(ly, a); t = ly.bottom; } }
   };
-  overIv(ivRecs('色調'), (ly, a) => addVal(ly, 'color', pick(a.r, k => k.endsWith('色調名')) ?? '', '／'));
-  overIv(ivRecs('観察記事'), (ly, a) => { const v = xmlNoteIn(pick(a.r, k => k.endsWith('_記事')) ?? ''); if (v) ly.note = ly.note ? ly.note + '\n' + v : v; });
+  const colR = ivRecs('色調'), noteR = ivRecs('観察記事');
+  overIv(colR, (ly, a) => addVal(ly, 'color', pick(a.r, k => k.endsWith('色調名')) ?? '', '／'));
+  overIv(noteR, (ly, a) => { const v = xmlNoteIn(pick(a.r, k => k.endsWith('_記事')) ?? ''); if (v) ly.note = ly.note ? ly.note + '\n' + v : v; });
+  L.xmlIv = { color: colR.map(a => ({ top: a.top, bottom: a.bottom, v: (pick(a.r, k => k.endsWith('色調名')) || '').trim() })),
+    note: noteR.map(a => ({ top: a.top, bottom: a.bottom, v: xmlNoteIn(pick(a.r, k => k.endsWith('_記事')) ?? '') })) };
   overIv(ivRecs('相対密度稠度'), (ly, a) => {
     const DC4 = { d: { 10: '非常に緩い', 20: '緩い', 30: '中ぐらい', 40: '密な', 50: '非常に密な' }, c: { 10: '非常に軟らかい', 20: '軟らかい', 30: '締まった', 40: '硬い', 50: '非常に硬い' } };
     const DC3 = { d: { 1: '非常に緩い', 2: '緩い', 3: '中ぐらい', 4: '密な', 5: '非常に密な' }, c: { 1: '軟らかい', 2: '中位', 3: '硬い', 4: '非常に硬い', 5: '固結した' } };
@@ -519,6 +522,7 @@ function parseXML(text, fname){
     コア形状区分: { '011': 'I', '012': 'II', '013': 'III', '014': 'IV', '015': 'V', '016': 'VI', '017': 'VII', '018': 'VIII', '021': 'I', '022': 'II', '023': 'III', '024': 'IV', '025': 'V', '026': 'VI' },
     割れ目区分: { '011': 'a', '012': 'b', '013': 'c', '014': 'd' } };
   STD.ボーリングコアの形状区分 = STD.コア形状区分; STD.割れ目の状態区分 = STD.割れ目区分;
+  L.rockIv = []; L.rockIvBuilt = false;
   for (const [k, tags] of Object.entries(RT)) {
     L.rock[k] = [];
     for (const tag of tags) {
@@ -535,13 +539,15 @@ function parseXML(text, fname){
   // 岩級区分（あれば）
   const clsMap = codeMap('岩級区分');
   for (const tag of ['岩級区分', '岩級']) {
+    let prevB = 0;
     for (const r of xmlRecords(doc, tag)) {
       const bottom = num(pick(r, k => k.includes('下端深度')));
       const top = num(pick(r, k => k.includes('上端深度')));
       const lv = String(pick(r, k => k.includes('岩級') && !k.includes('深度')) ?? '').trim(), label = clsMap.get(lv) || lv;
-      if (bottom !== null && label) L.classes.push({ top, bottom, label, x: r, tag });
+      if (bottom !== null) { L.classes.push({ top: top ?? prevB, bottom, label, x: r, tag }); prevB = bottom; }   // 岩級のない区間（土砂部など）も空の区間として残す
     }
-    if (L.classes.length) break;
+    if (L.classes.some(c => c.label)) break;
+    L.classes = [];
   }
   fixClassTops(L);
   {
@@ -558,7 +564,8 @@ function parseXML(text, fname){
     each(['コアチューブビット'], (r, d) => D.r5030.push({ depth: d, bit: [v(r['コアチューブビット_コアチューブ名']), v(r['コアチューブビット_ビット名'])].filter(Boolean).join('/') }));
     each(['送水条件'], (r, d) => D.r5040.push({ depth: d, wp: v(r['送水条件_送水圧']), wq: v(r['送水条件_送水量']), wout: v(r['送水条件_排水量']), wtype: v(r['送水条件_送水種類']) || (v(r['送水条件_送水種類コード']) ? 'W' + v(r['送水条件_送水種類コード']) : '') }));
     each(['孔径孔壁保護'], (r, d) => D.r5060.push({ depth: d, dia: v(r['孔径孔壁保護_孔径']), method: v(r['孔径孔壁保護_孔壁保護方法']) || v(r['孔径孔壁保護_孔壁保護コード']), state: v(r['孔径孔壁保護_孔壁保護実施理由']) }));
-    if (['r5020', 'r5030', 'r5040', 'r5060'].some(k => D[k].length)) { L.drl = D; L.drlFromXml = true; refreshRock(L); }
+    if (['r5020', 'r5030', 'r5040', 'r5060'].some(k => D[k].length)) { L.drl = D; L.drlFromXml = true; }
+    if (L.drl || ['hard', 'shape', 'crack', 'weather', 'alter', 'rec', 'rqd', 'maxc'].some(k => (L.rock[k] || []).length)) refreshRock(L);
   }
   L.hdr0 = Object.assign({}, L.hdr); L.elev0 = L.elev; L.name0 = L.name; L.total0 = L.total;
   return finish(L);
@@ -1345,10 +1352,15 @@ function rockInit(L){
   const R0 = L.rock || {}, AT = ['hard', 'shape', 'crack', 'weather', 'alter'];
   if (!L.rockIv.length && !L.rockIvBuilt && AT.some(f => (R0[f] || []).length)) {   // XML の区分（項目ごとの区間）から区間記録を作る
     L.rockIvBuilt = true;
-    const bs = [...new Set(AT.flatMap(f => (R0[f] || []).map(iv => +(+iv.bottom).toFixed(2))))].sort((a, b) => a - b);
-    const at = (f, d) => { const iv = (R0[f] || []).find(x => d > (x.top ?? 0) + 1e-6 && d <= x.bottom + 1e-6); return iv ? iv.v || '' : ''; };
+    const XI = L.xmlIv || { color: [], note: [] };
+    const bs = [...new Set([...AT.flatMap(f => (R0[f] || []).map(iv => iv.bottom)), ...XI.note.map(n => n.bottom)].map(b => +(+b).toFixed(2)))].sort((a, b) => a - b);
+    const at = (list, d) => { const iv = (list || []).find(x => d > (x.top ?? 0) + 1e-6 && d <= x.bottom + 1e-6); return iv ? iv.v || '' : ''; };
     let t = 0;
-    L.rockIv = bs.map(b => { const o = { top: t, bottom: b, sub: '', color: (layerAtBottom(L, b) || {}).color || '', text: '', textEdited: true, notes: [] }; AT.forEach(f => { o[f] = at(f, b); }); t = b; return o; });
+    L.rockIv = bs.map(b => {
+      const nt = XI.note.find(n => near(n.bottom, b));   // 記事は下端が一致する区間に（上端が上の区間に及ぶときも、この区間に書く）
+      const o = { top: t, bottom: b, sub: '', color: at(XI.color, b) || (layerAtBottom(L, b) || {}).color || '', text: nt ? nt.v : '', textEdited: true, notes: [] };
+      AT.forEach(f => { o[f] = at(R0[f], b); }); t = b; return o;
+    });
   }
   if (!L.core) {   // コア採取率・最大コア長・RQD を深度ごとの行にまとめる
     const m = new Map(), R = L.rock || {};
@@ -2190,6 +2202,38 @@ function xmlSetLeaf(src, tag, v){
   return src.replace(re, t === '' ? `<${tag} />` : `<${tag}>${xEsc(t)}</${tag}>`);
 }
 function treeSet(tree, pred, v){ for (const it of tree) { if (Array.isArray(it[1])) { if (treeSet(it[1], pred, v)) return true; } else if (pred(it[0])) { it[1] = v; return true; } } return false; }
+
+// 新しく作る XML の骨組み（DTD 5.00）。値の分からない必須項目は空の要素にする
+function periodISO(t){
+  t = String(t || ''); let era = null;
+  return t.split(/〜|～|~/).map(part => {
+    const e = part.match(/(令和|平成|昭和)/); if (e) era = e[1];
+    const v = (part.match(/\d+/g) || []).map(Number); if (v.length < 3) return '';
+    const y = v[0] >= 1000 ? v[0] : (era ? { 令和: 2018, 平成: 1988, 昭和: 1925 }[era] + v[0] : v[0]);
+    return `${y}-${String(v[1]).padStart(2, '0')}-${String(v[2]).padStart(2, '0')}`;
+  });
+}
+function xmlNewSkeleton(L){
+  const H = L.hdr || {}, E = (k, v) => [k, v ?? ''];
+  const dms = t => { const v = String(t || '').match(/[\d.]+/g) || []; return [v[0] || '', v[1] || '', v[2] || '']; };
+  const lat = dms(H.lat), lon = dms(H.lon), pr = periodISO(H.period), n2 = v => (v === null || v === undefined || v === '') ? '' : nstr(num(v) ?? 0);
+  const rock = L.format === 'gan' || hasRockData(L);
+  const 基礎 = ['基礎情報', [E('適用規格', 'JIS A 0205-2012'), E('適用規格', 'JIS A 0206-2013'), ['公開フラグ', [E('公開フラグ_コード', '1'), E('公開フラグ_備考', '')]]]];
+  const 標題 = ['標題情報', [
+    ['調査基本情報', [...(H.project ? [E('事業工事名', H.project)] : []), E('調査名', H.survey), E('調査目的', ''), E('調査対象', ''), E('ボーリング名', L.name), E('ボーリング総数', ''), E('ボーリング連番', '')]],
+    ['経度緯度情報', [E('経度_度', lon[0]), E('経度_分', lon[1]), E('経度_秒', lon[2]), E('緯度_度', lat[0]), E('緯度_分', lat[1]), E('緯度_秒', lat[2]), E('取得方法コード', ''), E('読取精度コード', ''), E('測地系', '')]],
+    ['調査位置', [E('調査位置住所', H.place), E('コード1次', ''), E('コード2次', ''), E('コード3次', '')]],
+    ['発注機関', [E('発注機関名称', H.client), E('テクリスコード', '')]],
+    ['調査期間', [E('調査期間_開始年月日', pr[0] || ''), E('調査期間_終了年月日', pr[1] || '')]],
+    ['調査会社', [E('調査会社_名称', H.company), E('調査会社_TEL', H.phone), E('調査会社_主任技師_氏名', H.chief), E('調査会社_現場代理人_氏名', H.agent), E('調査会社_コア鑑定者_氏名', H.core), E('調査会社_ボーリング責任者_氏名', H.boring)]],
+    ['ボーリング基本情報', [E('孔口標高', n2(L.elev)), E('総削孔長', n2(L.total)), E('柱状図様式', rock ? '21' : '12'), E('角度', n2(H.angle || 0)), E('方位', n2(H.dir || 0)), E('地盤勾配', n2(H.slope || 0))]],
+    ...(H.machine ? [['試錐機', [E('試錐機_名称', H.machine)]]] : []),
+    ...(H.engine ? [['エンジン', [E('エンジン_名称', H.engine)]]] : []),
+    ...(H.pump ? [['ポンプ', [E('ポンプ_名称', H.pump)]]] : []),
+  ]];
+  const free = H.datum ? `\n    <フリー情報>[標高基準：${xEsc(H.datum)}]</フリー情報>` : '';
+  return `<ボーリング情報 DTD_version="5.00">\n${xmlEl(基礎[0], 基礎[1], '  ', '\n')}\n${xmlEl(標題[0], 標題[1], '  ', '\n')}\n  <コア情報>${free}\n  </コア情報>\n</ボーリング情報>`;
+}
 function xmlYear(L){
   const ds = [...(L.water || []), ...(L.drill || [])].map(x => x.dateRaw).filter(Boolean);
   const t = String((L.hdr || {}).period || ds[0] || ''), y = (t.match(/\d{4}/) || [])[0];
@@ -2207,8 +2251,8 @@ function writeXML(L){
     src = L.raw.replace(/^﻿/, '').replace(/<\?xml[^>]*\?>\s*/, '').replace(/<!DOCTYPE[^>]*>\s*/i, '');
     notes.push({ t: '元のXMLの、アプリで編集していない項目（座標・岩石土コード・試料採取など）はそのまま残します。' });
   } else {
-    src = XML_TPL;
-    notes.push({ w: true, t: '調査件名・座標・調査期間など、交換用データのその他の項目は空です。電子納品に使う前に確認してください。' });
+    src = xmlNewSkeleton(L);
+    notes.push({ w: true, t: '基本情報タブの項目（調査名・調査位置・発注機関・調査期間・調査会社・緯度経度・使用機種など）は書き込みます。調査目的・調査対象・ボーリング総数・ボーリング連番・取得方法・測地系・メッシュコードなど、.bor／.gan にない項目は空欄です。電子納品に使う前に確認してください。' });
   }
   const eol = /\r\n/.test(src) ? '\r\n' : '\n';
   const n2 = v => (v === null || v === undefined) ? '' : nstr(v);
@@ -2262,10 +2306,22 @@ function writeXML(L){
   // 色調・観察記事・相対密度稠度：編集した項目だけ、層ごとの記録に作り直す
   const edited = f => !fromXml || L.layers.some(ly => ly.ed && ly.ed[f]);
   const tops = []; { let t = 0; for (const ly of L.layers) { tops.push(t); t = ly.bottom; } }
-  if (edited('color')) src = xmlSetRecs(src, '色調', L.layers.map(ly => [['色調_下端深度', nstr(ly.bottom)], ['色調_色調名', ly.color || '']]), eol);   // 色調は下端だけなので、空の層も記録を置く
-  if (edited('note')) {
-    src = xmlSetRecs(src, '観察記事', L.layers.map((ly, i) => [ly, i]).filter(([ly]) => ly.note).map(([ly, i]) => [['観察記事_上端深度', nstr(tops[i])], ['観察記事_下端深度', nstr(ly.bottom)], ['観察記事_記事', xmlNoteOut(ly.note)]]), eol);
-    src = xmlSetRecs(src, '観察記事枠線', L.layers.map(ly => [['観察記事枠線_下端深度', nstr(ly.bottom)]]), eol);
+  const RIV = (L.rockIv || []).filter(iv => iv.bottom < 9999), RE0 = L.rockEdited || {};
+  const ivNote = RIV.some(iv => String(iv.text || '').trim()), ivColor = RIV.some(iv => String(iv.color || '').trim());
+  const layNote = L.layers.some(ly => ly.note), layColor = L.layers.some(ly => ly.color);
+  // 岩盤（.gan など）は区間記録の記事・色調を使う。土質は層ごと
+  if (edited('color') || (ivColor && RE0.iv && fromXml)) {
+    if (ivColor && (!layColor || L.format === 'gan' || RE0.iv)) src = xmlSetRecs(src, '色調', RIV.map(iv => [['色調_下端深度', nstr(iv.bottom)], ['色調_色調名', iv.color || '']]), eol);
+    else src = xmlSetRecs(src, '色調', L.layers.map(ly => [['色調_下端深度', nstr(ly.bottom)], ['色調_色調名', ly.color || '']]), eol);   // 色調は下端だけなので、空の層も記録を置く
+  }
+  if (edited('note') || (ivNote && RE0.iv && fromXml)) {
+    if (ivNote && (!layNote || L.format === 'gan' || RE0.iv)) {
+      src = xmlSetRecs(src, '観察記事', RIV.filter(iv => String(iv.text || '').trim()).map(iv => [['観察記事_上端深度', nstr(iv.top ?? 0)], ['観察記事_下端深度', nstr(iv.bottom)], ['観察記事_記事', xmlNoteOut(String(iv.text).replace(/\s+$/, ''))]]), eol);
+      src = xmlSetRecs(src, '観察記事枠線', RIV.map(iv => [['観察記事枠線_下端深度', nstr(iv.bottom)]]), eol);
+    } else {
+      src = xmlSetRecs(src, '観察記事', L.layers.map((ly, i) => [ly, i]).filter(([ly]) => ly.note).map(([ly, i]) => [['観察記事_上端深度', nstr(tops[i])], ['観察記事_下端深度', nstr(ly.bottom)], ['観察記事_記事', xmlNoteOut(ly.note)]]), eol);
+      src = xmlSetRecs(src, '観察記事枠線', L.layers.map(ly => [['観察記事枠線_下端深度', nstr(ly.bottom)]]), eol);
+    }
   }
   if (edited('density') || edited('consistency')) {
     src = xmlSetRecs(src, '相対密度稠度', L.layers.map(ly => {
@@ -3134,8 +3190,9 @@ function xmlHdr(doc){
   const leaves = Array.from(doc.getElementsByTagName('*')).filter(e => !e.children.length && e.textContent.trim());
   const find = re => { const e = leaves.find(x => re.test(x.tagName)); return e ? e.textContent.trim() : ''; };
   const latlon = (key) => {
-    const v = leaves.filter(x => x.tagName.includes(key) && /度|分|秒/.test(x.tagName)).map(x => x.textContent.trim());
-    return v.length >= 3 ? `${v[0]}°${v[1]}′${v[2]}″` : (find(new RegExp(key)) || '');
+    const g = u => { const e = doc.getElementsByTagName(`${key}_${u}`)[0]; return e ? e.textContent.trim() : ''; };
+    if (g('度')) return `${g('度')}° ${g('分')}′ ${g('秒')}″`;
+    return find(new RegExp(key)) || '';
   };
   const st = find(/開始年月日/), en = find(/終了年月日/);
   return {
@@ -3415,8 +3472,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 a2869ba5） */
-window.APP_VER = 'a2869ba5';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 d504b143） */
+window.APP_VER = 'd504b143';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

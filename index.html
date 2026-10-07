@@ -283,6 +283,11 @@ table.ed.dr input.bad{color:#c0392b}
       <label><input type="radio" name="skind" id="sk-soil" value="soil"> 土質ボーリング柱状図</label>
       <label><input type="radio" name="skind" id="sk-rock" value="rock"> 岩盤ボーリング柱状図</label>
     </div>
+    <div class="kind" id="sNoteRow" hidden>
+      <span>記事の区切り</span>
+      <label><input type="radio" name="snote" id="sn-fine" value="fine"> 細層単位で表示</label>
+      <label><input type="radio" name="snote" id="sn-rock" value="rock"> 岩種区分単位で表示</label>
+    </div>
     <div class="prev" id="sPrev" hidden></div>
     <ul id="sNotes"></ul>
     <div class="acts">
@@ -2675,8 +2680,18 @@ function rockBody(L, X, yy, vis, D0, D1){
   }
   // 記事（区間ごと。入らないときは下へずらす）
   if (has('note')) {
-    const src = ivs ? ivs.map(iv => ({ t0: iv.top, b0: iv.bottom, text: iv.text || '' }))
+    let src = ivs ? ivs.map(iv => ({ t0: iv.top ?? 0, b0: iv.bottom, text: iv.text || '' }))
       : (() => { let t = 0; return L.layers.map(ly => { const o = { t0: t, b0: ly.bottom, text: ly.note || '' }; t = ly.bottom; return o; }); })();
+    if (ivs && S.opt.noteUnit === 'rock') {   // 岩種区分単位：同じ岩種区分（層）に入る細層の記事を1つの枠にまとめる
+      const li = d => { const ly = layerAtBottom(L, d); return ly ? L.layers.indexOf(ly) : -1; };
+      const g = [];
+      for (const b of src) {
+        const k = li(b.b0), last = g[g.length - 1];
+        if (last && last.k === k) { last.b0 = b.b0; if (b.text) last.text = last.text ? last.text + '\n' + b.text : b.text; }
+        else g.push({ k, t0: b.t0, b0: b.b0, text: b.text });
+      }
+      src = g;
+    }
     let cur = 0;
     const NF = 2.35, NL = 2.7;
     for (const b of src) {
@@ -3188,6 +3203,8 @@ function refreshSaveNotes(){
   const L = cur(); if (!L) return;
   const prev = $('#sPrev');
   $('#sKindRow').hidden = saveFmt !== 'pdf';
+  $('#sNoteRow').hidden = !(saveFmt === 'pdf' && pdfKind === 'rock');
+  document.getElementById(S.opt.noteUnit === 'rock' ? 'sn-rock' : 'sn-fine').checked = true;
   if (saveFmt === 'pdf') {
     const n = stdPageCount(L);
     document.getElementById('sk-' + pdfKind).checked = true;
@@ -3257,6 +3274,7 @@ async function savePDF(L, fname, msg){
 }
 $('#btnSave').addEventListener('click', openSave);
 document.querySelectorAll('input[name=skind]').forEach(r => r.addEventListener('change', () => { pdfKind = r.value; $('#sMsg').textContent = ''; refreshSaveNotes(); }));
+document.querySelectorAll('input[name=snote]').forEach(r => r.addEventListener('change', () => { S.opt.noteUnit = r.value; save(); $('#sMsg').textContent = ''; refreshSaveNotes(); }));
 $('#sCancel').addEventListener('click', closeSave);
 $('#sGo').addEventListener('click', doSave);
 $('#saveModal').addEventListener('click', e => { if (e.target.id === 'saveModal') closeSave(); });
@@ -3397,8 +3415,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 f848e46c） */
-window.APP_VER = 'f848e46c';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 a2869ba5） */
+window.APP_VER = 'a2869ba5';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

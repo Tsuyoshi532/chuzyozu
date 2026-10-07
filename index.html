@@ -2643,25 +2643,35 @@ function stdPageCount(L){ return sheetPages(L).length; }
 function hasRockData(L){ return !!(L.classes.length || (L.rock && Object.values(L.rock).some(a => a && a.length))); }
 
 // 土質区分・色調などの文字枠を上から順に並べる（薄い層は下へずらし、引出線で結ぶ）
+// 文字が層の厚さに収まるよう、文字を小さくする（下限まで縮めても入らないときだけ下へずらして引出線で結ぶ）
+const FIT = { name: [2.6, 1.7], wrap: [2.1, 1.4], note: [2.4, 1.5] };   // [標準, 下限]（mm）
+function fitWrap(text, w, avail, f0, fmin, lhK){
+  for (let fs = f0; ; fs = Math.round((fs - .1) * 100) / 100) {
+    const lines = wrapW(text, fs, w), need = lines.length * fs * lhK + 1.2;
+    if (need <= avail || fs <= fmin) return { fs, lines, need };
+  }
+}
 function textBoxes(L, SD, X){
-  const FS = 2.6, LH = FS * 1.12, NF = 2.4, NL = 2.75;
   let cur = 0, top = 0;
   return L.layers.map(ly => {
     const t0 = top, b0 = ly.bottom; top = ly.bottom;
-    const hTrue = (b0 - t0) * PG.MM;
+    const bt = Math.max(t0, cur), avail = Math.max(0, (b0 - bt) * PG.MM);   // ずらされた分を引いた、この層で使える高さ
     const cells = {}; let need = 0;
     for (const k of SD.text) {
       const v = k === 'soil' ? ly.name : k === 'color' ? ly.color : k === 'dens' ? ly.density : ly.consistency;
       if (!v || !X[k]) continue;
       const toks = vTokens(v);
-      if (toks.length * LH <= hTrue - 1.2) { cells[k] = { v: true, toks }; need = Math.max(need, toks.length * LH + 1.2); }
-      else { const lines = wrapW(v, 2.1, X[k].w - .8); cells[k] = { v: false, lines }; need = Math.max(need, lines.length * 2.45 + 1.2); }
+      let done = false;
+      for (let fs = FIT.name[0]; fs >= FIT.name[1] - 1e-6; fs = Math.round((fs - .1) * 100) / 100) {   // 縦書き
+        if (toks.length * fs * 1.12 + 1.2 <= avail && fs <= X[k].w - .4) { cells[k] = { v: true, toks, fs }; need = Math.max(need, toks.length * fs * 1.12 + 1.2); done = true; break; }
+      }
+      if (!done) { const r = fitWrap(v, X[k].w - .8, avail, FIT.wrap[0], FIT.wrap[1], 1.17); cells[k] = { v: false, lines: r.lines, fs: r.fs }; need = Math.max(need, r.need); }
     }
-    const notes = (X.note && SD.layerNotes !== false) ? wrapW(ly.note || '', NF, X.note.w - 1.4) : [];
-    need = Math.max(need, notes.length * NL + 1.4);
-    const bt = Math.max(t0, cur), bb = Math.max(b0, bt + need / PG.MM);
+    let notes = [], nfs = FIT.note[0];
+    if (X.note && SD.layerNotes !== false && ly.note) { const r = fitWrap(ly.note, X.note.w - 1.4, avail - .2, FIT.note[0], FIT.note[1], 1.15); notes = r.lines; nfs = r.fs; need = Math.max(need, r.need + .2); }
+    const bb = Math.max(b0, bt + need / PG.MM);
     cur = bb;
-    return { t0, b0, bt, bb, cells, notes };
+    return { t0, b0, bt, bb, cells, notes, nfs };
   });
 }
 
@@ -2749,16 +2759,16 @@ function rockBody(L, X, yy, vis, D0, D1){
       src = g;
     }
     let cur = 0;
-    const NF = 2.35, NL = 2.7;
     for (const b of src) {
       if (!b.text) continue;
-      const lines = wrapW(b.text, NF, X.note.w - 1.4), need = lines.length * NL + 1.2;
-      const bt = Math.max(b.t0, cur), bb = Math.max(b.b0, bt + need / PG.MM); cur = bb;
+      const bt = Math.max(b.t0, cur), r = fitWrap(b.text, X.note.w - 1.4, (b.b0 - bt) * PG.MM, FIT.note[0], FIT.note[1], 1.15);
+      const NF = r.fs, NL = NF * 1.15, lines = r.lines;
+      const bb = Math.max(b.b0, bt + r.need / PG.MM); cur = bb;
       if (!vis(bt, bb + .5)) continue;
       const yt = yy(bt), yb = yy(bb);
       s += hl(X.note.x, yb, X.note.r, yb, .18);
       if (Math.abs(bb - b.b0) > 1e-3) s += hl(X.note.r - 2.2, yy(b.b0), X.note.r, yb, .12);
-      lines.forEach((t, j) => { s += tx(X.note.x + .7, yt + 1.0 + NF * .88 + j * NL, t, NF); });
+      lines.forEach((t, j) => { s += tx(X.note.x + .7, yt + .7 + NF * .88 + j * NL, t, NF); });
     }
   }
 
@@ -3003,10 +3013,10 @@ function stdSheetSVG(L, p, n, pxW, pxH, kind = 'soil'){
     if (Math.abs(b.bb - b.b0) > 1e-3) body += hl(X.log.r, yy(b.b0), tx0 + 1.6, yb, .15) + hl(tx0, yb, tx0 + 1.6, yb, .15);   // 引出線
     for (const [k, cc] of Object.entries(b.cells)) {
       const c = X[k];
-      if (cc.v) { const FS = 2.6, LH = FS * 1.12, y0 = (yt + yb) / 2 - cc.toks.length * LH / 2 + FS * .86; cc.toks.forEach((t, j) => { body += txFit(c.x + c.w / 2, y0 + j * LH, t, FS, c.w - .4, 'middle'); }); }
-      else { const y0 = (yt + yb) / 2 - cc.lines.length * 2.45 / 2 + 2.1 * .86; cc.lines.forEach((t, j) => { body += txFit(c.x + c.w / 2, y0 + j * 2.45, t, 2.1, c.w - .5, 'middle'); }); }
+      if (cc.v) { const FS = cc.fs, LH = FS * 1.12, y0 = (yt + yb) / 2 - cc.toks.length * LH / 2 + FS * .86; cc.toks.forEach((t, j) => { body += txFit(c.x + c.w / 2, y0 + j * LH, t, FS, c.w - .4, 'middle'); }); }
+      else { const FS = cc.fs, LH = FS * 1.17, y0 = (yt + yb) / 2 - cc.lines.length * LH / 2 + FS * .86; cc.lines.forEach((t, j) => { body += txFit(c.x + c.w / 2, y0 + j * LH, t, FS, c.w - .5, 'middle'); }); }
     }
-    b.notes.forEach((t, j) => { body += tx(X.note.x + .7, yt + 1.0 + 2.4 * .88 + j * 2.75, t, 2.4); });
+    b.notes.forEach((t, j) => { body += tx(X.note.x + .7, yt + .7 + b.nfs * .88 + j * b.nfs * 1.15, t, b.nfs); });
   });
 
   // 地層名
@@ -3472,8 +3482,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 d504b143） */
-window.APP_VER = 'd504b143';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 132b7fd7） */
+window.APP_VER = '132b7fd7';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

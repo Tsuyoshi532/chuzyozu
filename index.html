@@ -35,7 +35,7 @@ html{height:100%} body{min-height:100%}   /* body の高さを固定すると、
 body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:14px;line-height:1.5}
 *{box-sizing:border-box}
 button,input,select{font:inherit;color:inherit}
-.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--panel)}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--panel)}
 .top-tabs{margin:0;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);scrollbar-width:none}
 .top-tabs::-webkit-scrollbar{display:none}
 .top-tabs .tab{padding:10px 12px;font-size:14px}
@@ -199,7 +199,7 @@ table.ed.dr input.bad{color:#c0392b}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
-<div class="top" id="top">
+<div class="topbar" id="top">
 <header class="bar">
   <div class="brand">柱状図ビューア <small>XML / BOR / GAN</small></div>
   <select id="logSel" class="sel" aria-label="表示する孔"></select>
@@ -3543,8 +3543,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 2406356b） */
-window.APP_VER = '2406356b';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 1c243592） */
+window.APP_VER = '1c243592';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

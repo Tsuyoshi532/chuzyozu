@@ -31,11 +31,18 @@
 :root[data-theme="dark"]{
   --bg:#11171b; --panel:#182127; --ink:#e2e9ed; --muted:#93a2ab; --line:#2b3841;
   --accent:#6aaedb; --accent-ink:#0d1a22; --water:#5fb2ef; --warn:#e8a25a; --chip:#22303a; color-scheme:dark}
-html,body{height:100%}
+html{height:100%} body{min-height:100%}   /* body の高さを固定すると、上部の固定（sticky）が途中で外れる */
 body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:14px;line-height:1.5}
 *{box-sizing:border-box}
 button,input,select{font:inherit;color:inherit}
-.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--panel)}
+.top-tabs{margin:0;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);scrollbar-width:none}
+.top-tabs::-webkit-scrollbar{display:none}
+.top-tabs .tab{padding:10px 12px;font-size:14px}
+/* 狭い画面：柱状図と編集のどちらか一方を出す */
+@media (max-width:959px){ body.v-fig .edit{display:none} body.v-edit .fig-col{display:none} .app{padding-top:10px} }
+@media (min-width:960px){ .top-tabs .tab-fig{display:none} .top-tabs{padding-left:calc(100% - 430px)} }
+.bar{background:var(--panel);border-bottom:1px solid var(--line);
   display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 16px}
 .brand{font-weight:700;font-size:16px;letter-spacing:.04em;margin-right:auto;display:flex;align-items:baseline;gap:8px}
 .brand small{font-weight:400;color:var(--muted);font-size:11px;letter-spacing:.08em}
@@ -47,7 +54,7 @@ button,input,select{font:inherit;color:inherit}
 select.sel{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:6px 8px;min-height:36px;max-width:240px}
 .app{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:14px 16px 24px}
 @media (min-width:960px){
-  .app{grid-template-columns:minmax(0,1fr) 400px;grid-template-rows:minmax(0,1fr);height:calc(100% - 58px)}
+  .app{grid-template-columns:minmax(0,1fr) 400px;grid-template-rows:minmax(0,1fr);height:calc(100dvh - var(--top-h, 100px))}
   .fig-col{min-height:0;display:flex;flex-direction:column}
   .fig-scroll{flex:1;min-height:0;max-height:none!important}
   .edit{overflow:auto;min-height:0}
@@ -192,6 +199,7 @@ table.ed.dr input.bad{color:#c0392b}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
+<div class="top" id="top">
 <header class="bar">
   <div class="brand">柱状図ビューア <small>XML / BOR / GAN</small></div>
   <select id="logSel" class="sel" aria-label="表示する孔"></select>
@@ -201,6 +209,15 @@ table.ed.dr input.bad{color:#c0392b}
   <button id="btnSave" class="btn" type="button">保存</button>
   <button id="btnClose" class="btn" type="button">閉じる</button>
 </header>
+<nav class="tabs top-tabs" role="tablist" aria-label="表示と編集の切り替え">
+  <button class="tab tab-fig" role="tab" data-tab="fig" aria-selected="false" id="tab-fig">柱状図</button>
+  <button class="tab" role="tab" data-tab="layers" aria-selected="true" id="tab-layers">層区分</button>
+  <button class="tab" role="tab" data-tab="spt" aria-selected="false" id="tab-spt">N値</button>
+  <button class="tab" role="tab" data-tab="water" aria-selected="false" id="tab-water">水位・掘進</button>
+  <button class="tab" role="tab" data-tab="rock" aria-selected="false" id="tab-rock">岩盤</button>
+  <button class="tab" role="tab" data-tab="basic" aria-selected="false" id="tab-basic">基本情報</button>
+</nav>
+</div>
 
 <main class="app">
   <section class="fig-col" aria-label="柱状図">
@@ -221,13 +238,6 @@ table.ed.dr input.bad{color:#c0392b}
   </section>
 
   <section class="edit" aria-label="データ編集">
-    <div class="tabs" role="tablist">
-      <button class="tab" role="tab" data-tab="layers" aria-selected="true" id="tab-layers">層区分</button>
-      <button class="tab" role="tab" data-tab="spt" aria-selected="false" id="tab-spt">N値</button>
-      <button class="tab" role="tab" data-tab="water" aria-selected="false" id="tab-water">水位・掘進</button>
-      <button class="tab" role="tab" data-tab="rock" aria-selected="false" id="tab-rock">岩盤</button>
-      <button class="tab" role="tab" data-tab="basic" aria-selected="false" id="tab-basic">基本情報</button>
-    </div>
     <div id="editBody"></div>
   </section>
 </main>
@@ -283,6 +293,11 @@ table.ed.dr input.bad{color:#c0392b}
       <label><input type="radio" name="skind" id="sk-soil" value="soil"> 土質ボーリング柱状図</label>
       <label><input type="radio" name="skind" id="sk-rock" value="rock"> 岩盤ボーリング柱状図</label>
     </div>
+    <div class="kind" id="sXmlRow" hidden>
+      <span>要領の版</span>
+      <label><input type="radio" name="sxml" id="sx-4" value="4"> H28版（BED0400）</label>
+      <label><input type="radio" name="sxml" id="sx-5" value="5"> R8.2版（BED0500）</label>
+    </div>
     <div class="kind" id="sNoteRow" hidden>
       <span>記事の区切り</span>
       <label><input type="radio" name="snote" id="sn-fine" value="fine"> 細層単位で表示</label>
@@ -310,7 +325,7 @@ table.ed.dr input.bad{color:#c0392b}
            warnings:[], sample:bool }
    ============================================================ */
 const KEY = 'chuzyozu.v1';
-const S = { logs: [], cur: 0, tab: 'layers', opt: { elev: true, log: true, n: true, color: false, shift: 0, ppm: 24 } };
+const S = { logs: [], cur: 0, tab: 'layers', view: 'fig', opt: { elev: true, log: true, n: true, color: false, shift: 0, ppm: 24 } };
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1283,7 +1298,7 @@ function attrLine(ly){
 }
 function renderEdit(){
   const L = cur(), el = $('#editBody');
-  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === S.tab));
+  syncView();
   if (!L) { el.innerHTML = '<p class="note">データを読み込むと、ここで層区分・N値・孔内水位を編集できます。</p>'; return; }
   let h = '';
   if (S.tab === 'layers') {
@@ -1664,9 +1679,22 @@ $('#editBody').addEventListener('click', e => {
   } else return;
   renderEdit(); render(); save();
 });
-document.querySelector('.tabs').addEventListener('click', e => {
+const isNarrow = () => !window.matchMedia('(min-width:960px)').matches;
+function syncView(){
+  const v = S.view === 'fig' ? 'fig' : 'edit';
+  document.body.classList.toggle('v-fig', v === 'fig'); document.body.classList.toggle('v-edit', v === 'edit');
+  const narrow = isNarrow();
+  document.querySelectorAll('.top-tabs .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === 'fig' ? (narrow && v === 'fig') : ((!narrow || v === 'edit') && t.dataset.tab === S.tab))));
+  const top = document.getElementById('top'); if (top) document.documentElement.style.setProperty('--top-h', top.offsetHeight + 'px');
+}
+document.querySelector('.top-tabs').addEventListener('click', e => {
   const t = e.target.closest('.tab'); if (!t) return;
-  S.tab = t.dataset.tab; renderEdit(); save();
+  const was = S.view;
+  if (t.dataset.tab === 'fig') S.view = 'fig';
+  else { S.view = 'edit'; S.tab = t.dataset.tab; renderEdit(); }
+  syncView(); save();
+  if (S.view === 'fig' && was !== 'fig') render();   // 隠れていた間は幅が測れないので描き直す
+  window.scrollTo(0, 0);
 });
 
 /* ---------------- 表示オプション ---------------- */
@@ -1712,6 +1740,7 @@ async function openFiles(files){
       S.logs.push(L); S.cur = S.logs.length - 1; ok.push(L);
     } catch (err) { msgs.push(err && err.message ? err.message : String(err)); }
   }
+  if (ok.length) { S.view = 'fig'; syncView(); }   // 読み込んだら柱状図を見せる
   try { _cls.clear(); render(); renderEdit(); save(); }
   catch (err) { msgs.push(`表示に失敗しました：${err && err.message ? err.message : err}`); }
   if (msgs.length) { toast(msgs.join(' ／ '), true); $('#status').innerHTML += msgs.map(m => ` <span class="w">⚠ ${esc(m)}</span>`).join(''); }
@@ -1731,7 +1760,7 @@ $('#btnClose').addEventListener('click', () => {
   S.logs.splice(S.cur, 1); S.cur = Math.max(0, Math.min(S.cur, S.logs.length - 1));
   render(); renderEdit(); save();
 });
-$('#btnSample').addEventListener('click', () => { loadSamples(); render(); renderEdit(); save(); });
+$('#btnSample').addEventListener('click', () => { loadSamples(); S.view = 'fig'; syncView(); render(); renderEdit(); save(); });
 ['dragover','dragenter'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); figScroll.classList.add('drop'); }));
 ['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); figScroll.classList.remove('drop'); }));
 document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) openFiles(Array.from(e.dataTransfer.files)); });   // ドラッグ＆ドロップは複数可
@@ -1740,12 +1769,12 @@ document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.fi
 let _saveT = 0;
 function save(){
   clearTimeout(_saveT);
-  _saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify({ logs: S.logs, cur: S.cur, opt: S.opt, tab: S.tab })); } catch (e) {} }, 300);
+  _saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify({ logs: S.logs, cur: S.cur, opt: S.opt, tab: S.tab, view: S.view })); } catch (e) {} }, 300);
 }
 function restore(){
   try {
     const d = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (d && Array.isArray(d.logs)) { S.logs = d.logs; S.logs.forEach(L => { try { assignTiming(L); } catch (e) {} }); S.cur = Math.min(d.cur || 0, Math.max(0, d.logs.length - 1)); Object.assign(S.opt, d.opt || {}); S.tab = d.tab || 'layers'; return true; }
+    if (d && Array.isArray(d.logs)) { S.logs = d.logs; S.logs.forEach(L => { try { assignTiming(L); } catch (e) {} }); S.cur = Math.min(d.cur || 0, Math.max(0, d.logs.length - 1)); Object.assign(S.opt, d.opt || {}); S.tab = d.tab || 'layers'; S.view = d.view === 'edit' ? 'edit' : 'fig'; return true; }
   } catch (e) {}
   return false;
 }
@@ -2213,12 +2242,12 @@ function periodISO(t){
     return `${y}-${String(v[1]).padStart(2, '0')}-${String(v[2]).padStart(2, '0')}`;
   });
 }
-function xmlNewSkeleton(L){
+function xmlNewSkeleton(L, ver = 5){
   const H = L.hdr || {}, E = (k, v) => [k, v ?? ''];
   const dms = t => { const v = String(t || '').match(/[\d.]+/g) || []; return [v[0] || '', v[1] || '', v[2] || '']; };
   const lat = dms(H.lat), lon = dms(H.lon), pr = periodISO(H.period), n2 = v => (v === null || v === undefined || v === '') ? '' : nstr(num(v) ?? 0);
   const rock = L.format === 'gan' || hasRockData(L);
-  const 基礎 = ['基礎情報', [E('適用規格', 'JIS A 0205-2012'), E('適用規格', 'JIS A 0206-2013'), ['公開フラグ', [E('公開フラグ_コード', '1'), E('公開フラグ_備考', '')]]]];
+  const 基礎 = ['基礎情報', [...(ver >= 5 ? [E('適用規格', 'JIS A 0205-2019'), E('適用規格', 'JIS A 0206-2023')] : [E('適用規格', 'JIS A 0205-2012'), E('適用規格', 'JIS A 0206-2013')]), ['公開フラグ', [E('公開フラグ_コード', '1'), E('公開フラグ_備考', '')]]]];
   const 標題 = ['標題情報', [
     ['調査基本情報', [...(H.project ? [E('事業工事名', H.project)] : []), E('調査名', H.survey), E('調査目的', ''), E('調査対象', ''), E('ボーリング名', L.name), E('ボーリング総数', ''), E('ボーリング連番', '')]],
     ['経度緯度情報', [E('経度_度', lon[0]), E('経度_分', lon[1]), E('経度_秒', lon[2]), E('緯度_度', lat[0]), E('緯度_分', lat[1]), E('緯度_秒', lat[2]), E('取得方法コード', ''), E('読取精度コード', ''), E('測地系', '')]],
@@ -2227,12 +2256,12 @@ function xmlNewSkeleton(L){
     ['調査期間', [E('調査期間_開始年月日', pr[0] || ''), E('調査期間_終了年月日', pr[1] || '')]],
     ['調査会社', [E('調査会社_名称', H.company), E('調査会社_TEL', H.phone), E('調査会社_主任技師_氏名', H.chief), E('調査会社_現場代理人_氏名', H.agent), E('調査会社_コア鑑定者_氏名', H.core), E('調査会社_ボーリング責任者_氏名', H.boring)]],
     ['ボーリング基本情報', [E('孔口標高', n2(L.elev)), E('総削孔長', n2(L.total)), E('柱状図様式', rock ? '21' : '12'), E('角度', n2(H.angle || 0)), E('方位', n2(H.dir || 0)), E('地盤勾配', n2(H.slope || 0))]],
-    ...(H.machine ? [['試錐機', [E('試錐機_名称', H.machine)]]] : []),
-    ...(H.engine ? [['エンジン', [E('エンジン_名称', H.engine)]]] : []),
-    ...(H.pump ? [['ポンプ', [E('ポンプ_名称', H.pump)]]] : []),
+    ...(H.machine || ver < 5 ? [['試錐機', [E('試錐機_名称', H.machine)]]] : []),   // H28版（4.00）では必須
+    ...(H.engine || ver < 5 ? [['エンジン', [E('エンジン_名称', H.engine)]]] : []),
+    ...(H.pump || ver < 5 ? [['ポンプ', [E('ポンプ_名称', H.pump)]]] : []),
   ]];
   const free = H.datum ? `\n    <フリー情報>[標高基準：${xEsc(H.datum)}]</フリー情報>` : '';
-  return `<ボーリング情報 DTD_version="5.00">\n${xmlEl(基礎[0], 基礎[1], '  ', '\n')}\n${xmlEl(標題[0], 標題[1], '  ', '\n')}\n  <コア情報>${free}\n  </コア情報>\n</ボーリング情報>`;
+  return `<ボーリング情報 DTD_version="${ver >= 5 ? '5.00' : '4.00'}">\n${xmlEl(基礎[0], 基礎[1], '  ', '\n')}\n${xmlEl(標題[0], 標題[1], '  ', '\n')}\n  <コア情報>${free}\n  </コア情報>\n</ボーリング情報>`;
 }
 function xmlYear(L){
   const ds = [...(L.water || []), ...(L.drill || [])].map(x => x.dateRaw).filter(Boolean);
@@ -2242,16 +2271,24 @@ function xmlYear(L){
   if (e) return { 令和: 2018, 平成: 1988, 昭和: 1925 }[e[1]] + (e[2] === '元' ? 1 : +e[2]);
   return TODAY.getFullYear();
 }
-function writeXML(L){
+// XML の版：H28版＝BED0400（DTD 4.00）、R8.2版＝BED0500（DTD 5.00）
+const XML_VER = { 4: { dtd: 'BED0400.DTD', v: '4.00', label: 'H28版（BED0400）', jis: ['JIS A 0205-2012', 'JIS A 0206-2013'] }, 5: { dtd: 'BED0500.DTD', v: '5.00', label: 'R8.2版（BED0500）', jis: ['JIS A 0205-2019', 'JIS A 0206-2023'] } };
+// JIS A 0205 の改正で番号が変わった岩石・土コード（4.00 → 5.00）
+const ROCK_CODE_45 = { '312050000': '312150000', '312060000': '312160000', '312070000': '312050000', '312080000': '312060000', '312090000': '312070000', '312100000': '312080000',
+  '312110000': '312090000', '312120000': '312110000', '312130000': '312120000', '312140000': '312130000', '312150000': '312140000', '999010005': '999020005' };
+const ROCK_CODE_54 = Object.fromEntries(Object.entries(ROCK_CODE_45).map(([a, b]) => [b, a]));
+function xmlVerOf(L){ return L.format === 'xml' && typeof L.raw === 'string' ? ((L.dtdVer || 4) >= 5 ? 5 : 4) : 5; }
+function writeXML(L, ver){
   const notes = [];
   const fromXml = L.format === 'xml' && typeof L.raw === 'string';
-  let doctype = '<!DOCTYPE ボーリング情報 SYSTEM "BED0500.DTD">', src;
+  const srcVer = xmlVerOf(L), tgt = +ver === 4 ? 4 : +ver === 5 ? 5 : srcVer, TV = XML_VER[tgt];
+  let doctype = `<!DOCTYPE ボーリング情報 SYSTEM "${TV.dtd}">`, src;
   if (fromXml) {
     const m = L.raw.match(/<!DOCTYPE[^>]*>/i); if (m) doctype = m[0];
     src = L.raw.replace(/^﻿/, '').replace(/<\?xml[^>]*\?>\s*/, '').replace(/<!DOCTYPE[^>]*>\s*/i, '');
     notes.push({ t: '元のXMLの、アプリで編集していない項目（座標・岩石土コード・試料採取など）はそのまま残します。' });
   } else {
-    src = xmlNewSkeleton(L);
+    src = xmlNewSkeleton(L, tgt);
     notes.push({ w: true, t: '基本情報タブの項目（調査名・調査位置・発注機関・調査期間・調査会社・緯度経度・使用機種など）は書き込みます。調査目的・調査対象・ボーリング総数・ボーリング連番・取得方法・測地系・メッシュコードなど、.bor／.gan にない項目は空欄です。電子納品に使う前に確認してください。' });
   }
   const eol = /\r\n/.test(src) ? '\r\n' : '\n';
@@ -2394,6 +2431,25 @@ function writeXML(L){
 
   if (fromXml && L.dtdVer < 4 && L.rockEdited && Object.keys(L.rockEdited).length) notes.push({ w: true, t: '元のXMLが古い版（DTD 3.00）のため、岩盤タブで編集した記録は保存されません。' });
   else src = xmlRockGroups(src, L, eol, fromXml, notes);
+  // 元の XML と違う版で保存するとき
+  if (fromXml && (L.dtdVer || 4) >= 4 && tgt !== srcVer) {
+    doctype = doctype.replace(/BED0[45]00\.DTD/i, TV.dtd);
+    src = src.replace(/(<ボーリング情報[^>]*DTD_version=")[^"]*(")/, `$1${TV.v}$2`);
+    const fromJ = XML_VER[srcVer].jis;
+    fromJ.forEach((j, i) => { src = src.split(`<適用規格>${j}</適用規格>`).join(`<適用規格>${TV.jis[i]}</適用規格>`); });
+    const map = tgt === 5 ? ROCK_CODE_45 : ROCK_CODE_54; let nRc = 0;
+    for (const x of xmlRecSpans(src, '工学的地質区分名現場土質名').reverse()) {
+      const t2 = x.text.replace(/(<工学的地質区分名現場土質名_(?:岩相|岩石|変成岩岩相|変成岩岩石)>)(\d{9})(<)/g, (m0, a, c, b) => map[c] ? (nRc++, a + map[c] + b) : m0);
+      if (t2 !== x.text) src = src.slice(0, x.s) + t2 + src.slice(x.e);
+    }
+    notes.push({ t: `${XML_VER[srcVer].label} の XML を ${TV.label} に変えて保存します（DTD名・版、適用規格の JIS 年版${nRc ? `、岩石・土コード ${nRc} か所（変成岩など番号が変わったもの）` : ''}を書き換え）。` });
+    if (tgt === 4) {
+      if (/<孔内水位>(?:(?!<\/孔内水位>)[\s\S])*<\/孔内水位>/.test(src) && xmlRecSpans(src, '孔内水位').some(x => !/<孔内水位_孔内水位>/.test(x.text))) notes.push({ w: true, t: '水位の値がない孔内水位の記録があります。H28版では孔内水位の値が必須です。' });
+      if (/<測地系>03<\/測地系>/.test(src)) notes.push({ w: true, t: '測地系が JGD2024（03）です。H28版にはこのコードがありません。' });
+      if (['試錐機', 'エンジン', 'ポンプ'].some(t => !new RegExp(`<${t}>`).test(src))) notes.push({ w: true, t: '試錐機・エンジン・ポンプのどれかがありません。H28版では必須です（基本情報タブで入れてください）。' });
+    }
+  } else if (fromXml && (L.dtdVer || 4) < 4 && ver) notes.push({ w: true, t: '元の XML が古い版（DTD 3.00）のため、版はそのままで保存します。' });
+  if (tgt === 5) notes.push({ t: 'R8.2版（BED0500）の確認には、電子納品チェックシステム 土木版 Ver.22.0.0（2026年9月29日公開）以降が必要です。' });
   return { text: `<?xml version="1.0" encoding="Shift_JIS"?>${eol}${doctype}${eol}${src.replace(/\s+$/, '')}`, notes };
 }
 
@@ -3259,8 +3315,9 @@ async function deliver(fname, data, fmt, msg){
   msg.textContent = `${fname} をダウンロードしました。`;
 }
 function baseName(L){ return ((L.source || L.name || 'boring').replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]/g, '_')) || 'boring'; }
+let xmlVerSel = 5;
 function buildOut(L, fmt){
-  const r = WRITERS[fmt](L);
+  const r = fmt === 'xml' ? writeXML(L, xmlVerSel) : WRITERS[fmt](L);
   const enc = sjisEncode(CRLF(r.text));
   const notes = r.notes.slice();
   if (enc.bad.length) notes.push({ w: true, t: `Shift_JIS にない文字は「?」になります：${enc.bad.join(' ')}` });
@@ -3270,6 +3327,8 @@ function refreshSaveNotes(){
   const L = cur(); if (!L) return;
   const prev = $('#sPrev');
   $('#sKindRow').hidden = saveFmt !== 'pdf';
+  $('#sXmlRow').hidden = saveFmt !== 'xml';
+  document.getElementById('sx-' + xmlVerSel).checked = true;
   $('#sNoteRow').hidden = !(saveFmt === 'pdf' && pdfKind === 'rock');
   document.getElementById(S.opt.noteUnit === 'rock' ? 'sn-rock' : 'sn-fine').checked = true;
   if (saveFmt === 'pdf') {
@@ -3299,6 +3358,7 @@ function openSave(){
   const L = cur(); if (!L) return;
   saveFmt = WRITERS[L.format] ? L.format : 'xml';
   pdfKind = (L.format === 'gan' || hasRockData(L)) ? 'rock' : 'soil';
+  xmlVerSel = L.format === 'xml' ? xmlVerOf(L) : (+S.opt.xmlVer === 4 ? 4 : 5);   // XML は元の版、ほかは前回選んだ版
   document.getElementById('sf-' + saveFmt).checked = true;
   $('#sFname').value = baseName(L) + EXT[saveFmt];
   $('#sMsg').textContent = '';
@@ -3341,6 +3401,7 @@ async function savePDF(L, fname, msg){
 }
 $('#btnSave').addEventListener('click', openSave);
 document.querySelectorAll('input[name=skind]').forEach(r => r.addEventListener('change', () => { pdfKind = r.value; $('#sMsg').textContent = ''; refreshSaveNotes(); }));
+document.querySelectorAll('input[name=sxml]').forEach(r => r.addEventListener('change', () => { xmlVerSel = +r.value; if (cur() && cur().format !== 'xml') S.opt.xmlVer = xmlVerSel; save(); $('#sMsg').textContent = ''; refreshSaveNotes(); }));
 document.querySelectorAll('input[name=snote]').forEach(r => r.addEventListener('change', () => { S.opt.noteUnit = r.value; save(); $('#sMsg').textContent = ''; refreshSaveNotes(); }));
 $('#sCancel').addEventListener('click', closeSave);
 $('#sGo').addEventListener('click', doSave);
@@ -3477,13 +3538,13 @@ figBody.addEventListener('click', e => { const h = e.target.closest && e.target.
 if (!restore() || !S.logs.length) loadSamples();
 syncOpts(); render(); renderEdit();
 let _rz = 0;
-window.addEventListener('resize', () => { clearTimeout(_rz); _rz = setTimeout(render, 120); });
+window.addEventListener('resize', () => { clearTimeout(_rz); _rz = setTimeout(() => { syncView(); render(); }, 120); });
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
 </script>
 
 <script>
-/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 132b7fd7） */
-window.APP_VER = '132b7fd7';
+/* PWA：オフライン用の仕組みを登録し、保存領域を消されにくくする（版 2406356b） */
+window.APP_VER = '2406356b';
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {

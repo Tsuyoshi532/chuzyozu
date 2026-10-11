@@ -1,7 +1,6 @@
 {
-  "name": "柱状図ビューア",
-  "short_name": "柱状図",
-  "description": "国交省XML・柱状BASE・岩盤BASEの柱状図を表示・編集",
+  "name": "\u67f1\u72b6\u56f3\u30d3\u30e5\u30fc\u30a2",
+  "short_name": "\u67f1\u72b6\u56f3",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",

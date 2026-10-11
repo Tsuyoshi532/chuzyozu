@@ -1,13 +1,11 @@
-// 柱状図ビューア：オフライン用（版 1c243592）
-const CACHE = 'chuzyozu-1c243592';
+const CACHE = 'app-1c243592';
 const FILES = ["./", "index.html", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('chuzyozu-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => (k.startsWith('app-') || k.startsWith('chuzyozu-')) && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
-// 画面（HTML）は新しい版を先に取りに行き、つながらなければ保存してある版。ほかは保存してある版を先に使う
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
